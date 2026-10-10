@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gutterlight — Audio Lab</title>
+<!-- Standalone audition page for the audio module: open from file://, click anything to hear it.
+     Loads the same scripts as index.html (namespace + audio + all tracks); no game code. -->
+<style>
+  body { margin: 0; padding: 16px 22px; background: #121318; color: #d8d4c8; font: 14px Georgia, serif; }
+  h1 { font-weight: normal; letter-spacing: 0.2em; margin: 0 0 6px; color: #e8e2d0; }
+  h2 { font-weight: normal; font-size: 15px; letter-spacing: 0.12em; color: #a9b4d0; margin: 18px 0 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button { background: #23252f; color: #e4dfcf; border: 1px solid #3a3d4c; border-radius: 4px; padding: 4px 9px;
+           font: 13px Georgia, serif; cursor: pointer; }
+  button:hover { background: #2f3241; } button.on { background: #3b4a7a; border-color: #6c80c0; }
+  button.missing { opacity: 0.35; }
+  label { margin-right: 12px; } input[type=range] { vertical-align: middle; width: 120px; }
+  #state { font: 12px monospace; color: #8f96a8; white-space: pre-wrap; margin-top: 14px; }
+  .hint { color: #8a8f9c; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>GUTTERLIGHT · AUDIO LAB</h1>
+<div class="hint">Click once anywhere to start audio. Tracks loop; click again to stop. Errors from track validation appear in the browser console.</div>
+<h2>MIX</h2>
+<div class="row" id="mix"></div>
+<h2>MUSIC</h2>
+<div class="row" id="tracks"></div>
+<div class="row" style="margin-top:6px"><label>intensity layer <input id="layer" type="range" min="0" max="1" step="0.05" value="0"> <span id="layerv">0</span></label>
+  <button id="duck">duck 0.6 / 2 s</button></div>
+<h2>STINGERS</h2>
+<div class="row" id="stingers"></div>
+<h2>AMBIENCE</h2>
+<div class="row" id="ambience"></div>
+<h2>SOUND EFFECTS</h2>
+<div class="row" style="margin-bottom:6px"><label>pitch <input id="pitch" type="range" min="0.5" max="2" step="0.05" value="1"> <span id="pitchv">1</span></label>
+  <label>pan <input id="pan" type="range" min="-1" max="1" step="0.1" value="0"> <span id="panv">0</span></label></div>
+<div class="row" id="sfx"></div>
+<h2>INSTRUMENTS</h2>
+<div class="row"><select id="inst"></select> <input id="note" value="" size="5" placeholder="note">
+  <label>vel <input id="vel" type="range" min="0.1" max="1" step="0.05" value="0.8"></label>
+  <button id="play1">play note</button> <button id="playArp">play Dm arpeggio</button></div>
+<div id="state"></div>
+
+<script>globalThis.G = globalThis.G || {};</script>
+<script src="../src/core/namespace.js"></script>
+<script src="../src/audio/audio.js"></script>
+<script src="../src/audio/sfx.js"></script>
+<script src="../src/audio/tracks/title.js"></script>
+<script src="../src/audio/tracks/shore.js"></script>
+<script src="../src/audio/tracks/lastlight.js"></script>
+<script src="../src/audio/tracks/guttered.js"></script>
+<script src="../src/audio/tracks/meltbloom.js"></script>
+<script src="../src/audio/tracks/flue.js"></script>
+<script src="../src/audio/tracks/nave.js"></script>
+<script src="../src/audio/tracks/chandlery.js"></script>
+<script src="../src/audio/tracks/mothwood.js"></script>
+<script src="../src/audio/tracks/rime.js"></script>
+<script src="../src/audio/tracks/sanctum.js"></script>
+<script src="../src/audio/tracks/boss.js"></script>
+<script src="../src/audio/tracks/sable.js"></script>
+<script src="../src/audio/tracks/keeper.js"></script>
+<script src="../src/audio/tracks/lucerne.js"></script>
+<script src="../src/audio/tracks/ending.js"></script>
+<script>
+(function () {
+  'use strict';
+  const A = G.Audio;
+  const $ = (id) => document.getElementById(id);
+  const btn = (parent, label, fn, cls) => {
+    const b = document.createElement('button');
+    b.textContent = label; if (cls) b.className = cls;
+    b.addEventListener('click', () => { A.init(); fn(b); });
+    $(parent).appendChild(b);
+    return b;
+  };
+  document.addEventListener('pointerdown', () => A.init(), { once: true });
+
+  // mix
+  for (const bus of ['master', 'music', 'sfx', 'ambience']) {
+    const l = document.createElement('label');
+    l.innerHTML = `${bus} <input type="range" min="0" max="1" step="0.05" value="1">`;
+    l.querySelector('input').addEventListener('input', (e) => A.setVolume(bus, parseFloat(e.target.value)));
+    $('mix').appendChild(l);
+  }
+  btn('mix', 'mute', (b) => { A.muted = !A.muted; b.classList.toggle('on', A.muted); });
+
+  // music
+  const trackBtns = {};
+  for (const id of A.TRACK_IDS) {
+    const defined = A.trackIds().indexOf(id) >= 0;
+    trackBtns[id] = btn('tracks', id, () => {
+      const next = A.currentMusic === id ? null : id;
+      A.music(next, { layer: parseFloat($('layer').value) });
+      for (const k in trackBtns) trackBtns[k].classList.toggle('on', k === next);
+    }, defined ? '' : 'missing');
+  }
+  $('layer').addEventListener('input', (e) => { $('layerv').textContent = e.target.value; A.musicLayer(parseFloat(e.target.value)); });
+  $('duck').addEventListener('click', () => A.duck(0.6, 2));
+
+  for (const id of A.stingerNames()) btn('stingers', id, () => A.stinger(id));
+
+  const ambBtns = {};
+  for (const id of A.AMBIENCE_IDS) {
+    ambBtns[id] = btn('ambience', id, () => {
+      const next = A.currentAmbience === id ? null : id;
+      A.ambience(next);
+      for (const k in ambBtns) ambBtns[k].classList.toggle('on', k === next);
+    });
+  }
+
+  for (const id of ['pitch', 'pan']) $(id).addEventListener('input', (e) => { $(id + 'v').textContent = e.target.value; });
+  for (const name of A.sfxNames()) {
+    btn('sfx', name, () => A.sfx(name, { pitch: parseFloat($('pitch').value), pan: parseFloat($('pan').value), force: true }));
+  }
+
+  const info = A.instruments();
+  for (const name of Object.keys(info)) {
+    const o = document.createElement('option');
+    o.value = name; o.textContent = `${name} (${info[name].range.join('–')})`;
+    $('inst').appendChild(o);
+  }
+  const syncNote = () => { $('note').value = info[$('inst').value].def; };
+  $('inst').addEventListener('change', syncNote); syncNote();
+  $('play1').addEventListener('click', () => { A.init(); A.playNote($('inst').value, $('note').value, { dur: 1.5, vel: parseFloat($('vel').value) }); });
+  $('playArp').addEventListener('click', () => {
+    A.init();
+    const inst = $('inst').value, def = A.noteToMidi(info[inst].def), base = def - (((def % 12) + 10) % 12);  // D at/below default
+    [0, 3, 7, 12, 15, 19, 24].forEach((iv, i) => setTimeout(() => A.playNote(inst, A.midiToNote(base + iv), { dur: 0.6, vel: parseFloat($('vel').value) }), i * 220));
+  });
+
+  setInterval(() => { $('state').textContent = JSON.stringify(A.state(), null, 1); }, 250);
+})();
+</script>
+</body>
+</html>

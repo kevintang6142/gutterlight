@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gutterlight — Art Lab</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #c { display: block; }
+  #hud { position: absolute; left: 8px; bottom: 6px; color: #9aa; font: 12px monospace; pointer-events: none; text-shadow: 0 0 3px #000; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1280" height="720"></canvas>
+<div id="hud"></div>
+<!-- Shim (pre): create G only if the core is still a stub. The real core overwrites/extends it. -->
+<script>
+  if (!globalThis.G) globalThis.G = {};
+</script>
+<script src="../src/core/namespace.js"></script>
+<script src="../src/core/util.js"></script>
+<!-- Shim (post): fill in ONLY what the core does not provide yet. -->
+<script>
+(function () {
+  const G = globalThis.G = globalThis.G || {};
+  if (!G.CONST) G.CONST = { TILE: 40, VIEW_W: 1280, VIEW_H: 720, CELL_W: 16, CELL_H: 9, DT: 1 / 60 };
+  if (!G.T) G.T = { EMPTY: 0, SOLID: 1, GLAZED: 2, PLATFORM: 3, SPIKES: 4, WATER: 5, LAVA: 6, BREAKABLE: 7, DIVEFLOOR: 8, BGWALL: 9 };
+  if (!G.TILE_CHARS) G.TILE_CHARS = { '.': 0, '#': 1, X: 2, '=': 3, '^': 4, '~': 5, '%': 6, B: 7, D: 8, ':': 9 };
+  if (!G.U) G.U = {};
+  if (!G.U.makeCanvas) G.U.makeCanvas = function (w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return { canvas: c, ctx: c.getContext('2d') }; };
+  if (!G.U.hash) G.U.hash = function (s) { let h = 0x811c9dc5; s = String(s); for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; };
+})();
+</script>
+<script src="../src/art/art.js"></script>
+<script src="../src/art/terrain.js"></script>
+<script src="../src/art/background.js"></script>
+<script src="../src/art/characters.js"></script>
+<script src="../src/art/props.js"></script>
+<script src="../src/art/regions/shore.js"></script>
+<script src="../src/art/regions/lastlight.js"></script>
+<script src="../src/art/regions/guttered.js"></script>
+<script src="../src/art/regions/meltbloom.js"></script>
+<script src="../src/art/regions/flue.js"></script>
+<script src="../src/art/regions/nave.js"></script>
+<script src="../src/art/regions/chandlery.js"></script>
+<script src="../src/art/regions/mothwood.js"></script>
+<script src="../src/art/regions/rime.js"></script>
+<script src="../src/art/regions/sanctum.js"></script>
+<script src="art_lab_rooms.js"></script>
+<script>
+(function () {
+  'use strict';
+  const G = globalThis.G, Art = G.Art, T = 40, VW = 1280, VH = 720;
+  const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+  const REGIONS = ['shore', 'lastlight', 'guttered', 'meltbloom', 'flue', 'nave', 'chandlery', 'mothwood', 'rime', 'sanctum'];
+  const DARK = { shore: 0.2, lastlight: 0.3, guttered: 0.55, meltbloom: 0.35, flue: 0.6, nave: 0.45, chandlery: 0.4, mothwood: 0.7, rime: 0.45, sanctum: 0.3, test: 0.3 };
+  const CH = G.TILE_CHARS;
+  const qs = new URLSearchParams(location.search);
+
+  // Minimal G.Room stand-in per TECH_SPEC §7.3b.
+  function makeRoom(def, regionId, theme) {
+    const rows = def.tiles.length, cols = def.tiles[0].length;
+    const tiles = new Uint8Array(cols * rows);
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const v = CH[def.tiles[r][c]]; tiles[r * cols + c] = v === undefined ? 0 : v; }
+    const id = def.id + '_' + regionId;
+    const room = {
+      id, def: Object.assign({}, def, { id, region: regionId, theme: Object.assign({}, def.theme || {}, theme || {}) }),
+      regionId, region: { id: regionId, dark: DARK[regionId] }, cols, rows, widthPx: cols * T, heightPx: rows * T, gx: 0, gy: 0, tiles,
+      tileAt(c, r) { if (c < 0 || r < 0 || c >= cols || r >= rows) return 1; return tiles[r * cols + c]; },
+      setTile(c, r, v) { if (c >= 0 && r >= 0 && c < cols && r < rows) tiles[r * cols + c] = v; },
+      entities: [], solids: [], dark: DARK[regionId], components: [], artCache: null,
+    };
+    // breakable components like the engine (id = <roomId>:<minCol>,<minRow>)
+    const seen = new Uint8Array(cols * rows);
+    for (let i = 0; i < cols * rows; i++) {
+      const v = tiles[i];
+      if (seen[i] || (v !== 7 && v !== 8)) continue;
+      const list = [], st = [i]; seen[i] = 1;
+      while (st.length) { const j = st.pop(), c = j % cols, r = (j / cols) | 0; list.push([c, r]);
+        for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nc = c + dc, nr = r + dr; if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue; const nj = nr * cols + nc; if (!seen[nj] && tiles[nj] === v) { seen[nj] = 1; st.push(nj); } } }
+      const mc = Math.min(...list.map((q) => q[0])), mr = Math.min(...list.map((q) => q[1]));
+      room.components.push({ id: id + ':' + mc + ',' + mr, code: v, tiles: list, broken: false, hits: 0 });
+    }
+    return room;
+  }
+
+  // ---- placeholder Wickling (uses the shared character helpers) ---------------------------------
+  const scarf = Art.char && Art.char.cloth ? Art.char.cloth.create(4, 8) : null;
+  function drawWickling(ctx, x, feetY, t, facing) {
+    const C = Art.char;
+    if (C && C.waxBody) {
+      if (scarf) {
+        for (let i = 0; i < 30; i++) C.cloth.update(scarf, x - facing * 6, feetY - 40, 1 / 60, { gravity: 500, wind: -facing * 60 + Math.sin(t * 2) * 30 });
+        C.cloth.draw(ctx, scarf, { width: 9, color: '#5c5e68', outline: '#141218' });
+      }
+      C.shadow(ctx, x, feetY, 16);
+      ctx.fillStyle = '#141218'; ctx.fillRect(x - 7, feetY - 9, 5, 9); ctx.fillRect(x + 2, feetY - 9, 5, 9);
+      C.waxBody(ctx, x, feetY - 6, 26, 40, { seed: 3, drips: 3, lightDir: -facing });
+      C.eyes(ctx, x + facing * 2, feetY - 33, { kind: 'slit', size: 9, gap: 9, blink: (t % 3.2) > 3.08 ? 1 : 0 });
+      C.wick(ctx, x, feetY - 46, { len: 6, bend: -facing * 1.5 });
+      Art.flame(ctx, x - facing * 1.5, feetY - 51, 20, 'blue', t, 1);
+    } else {
+      ctx.fillStyle = '#e8e2d0'; ctx.fillRect(x - 13, feetY - 46, 26, 46);
+      Art.flame(ctx, x, feetY - 48, 18, 'blue', t, 1);
+    }
+  }
+
+  // ---- lighting stand-in: mirrors src/engine/lighting.js (half-res darkness map tinted with
+  // palette.darkness, soft light holes, additive bloom k = 0.1 + dark*0.16, r*0.55) ------------------
+  const dark = G.U.makeCanvas(VW / 2, VH / 2);
+  let holeSprite = null;
+  function flickerOf(l, t) {
+    if (!l.flicker) return 1;
+    const s = (l.x || 0) * 0.013 + (l.y || 0) * 0.007;
+    return 0.86 + 0.08 * Math.sin(t * 9.1 + s) + 0.06 * Math.sin(t * 23.7 + s * 3.1);
+  }
+  function lightPass(ctx, room, cam, t, lights) {
+    if (G.lighting && G.lighting.render && G.lighting !== LAB_FAKE_LIGHTING && qs.get('engineLight')) return;
+    if (!holeSprite) {
+      const s = G.U.makeCanvas(128, 128), g = s.ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+      g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.3, 'rgba(255,255,255,0.92)'); g.addColorStop(0.62, 'rgba(255,255,255,0.45)');
+      g.addColorStop(0.85, 'rgba(255,255,255,0.12)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      s.ctx.fillStyle = g; s.ctx.fillRect(0, 0, 128, 128); holeSprite = s.canvas;
+    }
+    const d = dark.ctx, pal = Art.palette(room.regionId), dk = room.dark;
+    d.globalCompositeOperation = 'source-over'; d.globalAlpha = 1;
+    d.clearRect(0, 0, VW / 2, VH / 2);
+    d.fillStyle = Art.util.rgba(pal.darkness || '#04050a', Math.min(0.97, dk));
+    d.fillRect(0, 0, VW / 2, VH / 2);
+    d.globalCompositeOperation = 'destination-out';
+    const vis = lights.filter((L) => !(L.x + L.r < cam.x || L.x - L.r > cam.x + VW || L.y + L.r < cam.y || L.y - L.r > cam.y + VH));
+    for (const L of vis) {
+      const a = Math.max(0, Math.min(1, (L.intensity == null ? 1 : L.intensity) * flickerOf(L, t)));
+      const r = L.r / 2;
+      d.globalAlpha = a;
+      d.drawImage(holeSprite, (L.x - cam.x) / 2 - r, (L.y - cam.y) / 2 - r, r * 2, r * 2);
+    }
+    d.globalCompositeOperation = 'source-over'; d.globalAlpha = 1;
+    ctx.drawImage(dark.canvas, 0, 0, VW, VH);
+    const k = 0.1 + dk * 0.16;
+    for (const L of vis) Art.glow(ctx, L.x - cam.x, L.y - cam.y, L.r * 0.55, L.color || '#ffffff', k * (L.intensity == null ? 1 : L.intensity) * flickerOf(L, t));
+  }
+  const LAB_FAKE_LIGHTING = null;
+
+  // ---- frame pipeline (TECH_SPEC §12) ---------------------------------------------------------
+  const timing = {};
+  function stamp(name, t0, flush) {
+    if (flush) ctx.getImageData(0, 0, 1, 1);
+    const dt = performance.now() - t0;
+    (timing[name] = timing[name] || []).push(dt);
+    return performance.now();
+  }
+  function frame(room, cam, t, player, opts) {
+    opts = opts || {};
+    const fl = !!opts.flush;
+    let t0 = performance.now();
+    Art.updateAtmosphere(room, cam, 1 / 60);
+    t0 = stamp('updateAtmosphere', t0, false);
+    Art.drawBackground(ctx, room, cam, t);
+    t0 = stamp('drawBackground', t0, fl);
+    ctx.save();
+    ctx.translate(-cam.x, -cam.y);
+    Art.drawBackDecor(ctx, room, cam, t);
+    t0 = stamp('drawBackDecor', t0, fl);
+    Art.drawTerrain(ctx, room, cam, t);
+    t0 = stamp('drawTerrain', t0, fl);
+    Art.drawBreakables(ctx, room, cam, t);
+    t0 = stamp('drawBreakables', t0, fl);
+    if (player && !opts.noPlayer) drawWickling(ctx, player.x, player.y, t, player.facing || 1);
+    t0 = performance.now();
+    Art.drawLiquids(ctx, room, cam, t);
+    t0 = stamp('drawLiquids', t0, fl);
+    Art.drawFrontDecor(ctx, room, cam, t);
+    t0 = stamp('drawFrontDecor', t0, fl);
+    ctx.restore();
+    Art.drawForeground(ctx, room, cam, t);
+    t0 = stamp('drawForeground', t0, fl);
+    if (!opts.noLight) {
+      const lights = Art.staticLights(room).slice();
+      if (player) lights.push({ x: player.x, y: player.y - 54 + 54 * 0.3, r: 260, color: '#79c4ff', intensity: 1, flicker: true });
+      lightPass(ctx, room, cam, t, lights);
+    }
+    t0 = performance.now();
+    Art.drawAtmosphere(ctx, room, cam, t);
+    stamp('drawAtmosphere', t0, fl);
+  }
+
+  const rooms = new Map();
+  function getRoom(ri, region, theme) {
+    const key = ri + ':' + region + ':' + JSON.stringify(theme || {});
+    if (!rooms.has(key)) rooms.set(key, makeRoom(globalThis.ART_LAB_ROOMS[ri], region, theme));
+    return rooms.get(key);
+  }
+  function camFor(room, ci) {
+    const c = room.def.cams[ci] || room.def.cams[0];
+    return { x: Math.max(0, Math.min(room.widthPx - VW, c[0])), y: Math.max(0, Math.min(room.heightPx - VH, c[1])), w: VW, h: VH };
+  }
+  function playerFor(room, ci) {
+    const c = room.def.cams[ci] || room.def.cams[0];
+    return { x: (c[2] + 0.5) * T, y: (c[3] + 1) * T, facing: 1 };
+  }
+
+  const LAB = (window.LAB = {
+    REGIONS, rooms: globalThis.ART_LAB_ROOMS, timing,
+    makeRoom, getRoom,
+    /** Render one shot. Returns prepare timings. */
+    render(region, ri, ci, opts) {
+      opts = opts || {};
+      const room = getRoom(ri, region, opts.theme);
+      const t1 = performance.now();
+      const cache = Art.prepareRoom(room);
+      const prep = performance.now() - t1;
+      const cam = camFor(room, ci), player = playerFor(room, ci);
+      const t = opts.t === undefined ? 12.3 : opts.t;
+      // warm up atmosphere so particles are spread realistically
+      for (let i = 0; i < (opts.warm === undefined ? 30 : opts.warm); i++) Art.updateAtmosphere(room, cam, 1 / 30);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, VW, VH);
+      frame(room, cam, t, player, opts);
+      return { prepMs: +prep.toFixed(1), timing: cache && cache.timing, cam, lights: Art.staticLights(room).length };
+    },
+    /** Average per-stage frame cost over n frames (flush=true forces raster with getImageData). */
+    perf(region, ri, ci, n, flush) {
+      const room = getRoom(ri, region);
+      Art.prepareRoom(room);
+      const cam = camFor(room, ci), player = playerFor(room, ci);
+      for (const k of Object.keys(timing)) delete timing[k];
+      for (let i = 0; i < n; i++) { cam.x = Math.max(0, Math.min(room.widthPx - VW, cam.x + 3)); frame(room, cam, i / 60, player, { flush, noLight: true }); }
+      const out = {};
+      for (const k of Object.keys(timing)) { const a = timing[k].slice(2); out[k] = +(a.reduce((s, v) => s + v, 0) / Math.max(1, a.length)).toFixed(3); }
+      return out;
+    },
+    /** prepareRoom cost for a synthetic big room (cols x rows) of the lab hall tiled. */
+    bigRoomPrep(region, cols, rows) {
+      const src = globalThis.ART_LAB_ROOMS[0].tiles;
+      const tiles = [];
+      for (let r = 0; r < rows; r++) { let s = ''; for (let c = 0; c < cols; c++) s += src[r % src.length][c % src[0].length]; tiles.push(s); }
+      const def = { id: 'lab_big' + Math.random().toString(36).slice(2, 6), tiles, cams: [[0, 0, 10, 10]] };
+      const room = makeRoom(def, region);
+      const t0 = performance.now();
+      const cache = Art.prepareRoom(room);
+      const ms = performance.now() - t0;
+      return { ms: +ms.toFixed(1), timing: cache.timing, stats: Art.cacheStats() };
+    },
+    clear() { Art.clearCaches(); rooms.clear(); },
+    propsSheet,
+    charSheet,
+  });
+
+  // ---- contact sheets --------------------------------------------------------------------------
+  function sheetBg(title) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const g = ctx.createLinearGradient(0, 0, 0, VH);
+    g.addColorStop(0, '#1b1d24'); g.addColorStop(1, '#2a2d36');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
+    ctx.fillStyle = '#c8ccd6'; ctx.font = '14px Georgia, serif'; ctx.textAlign = 'left';
+    ctx.fillText(title, 12, 20);
+  }
+  function propsSheet(t) {
+    t = t === undefined ? 1.3 : t;
+    const kinds = Art.propKinds();
+    sheetBg('GUTTERLIGHT — decor prop catalog (' + kinds.length + ' kinds)  ·  G.Art.drawDecorProp(ctx, kind, x, y, opts, t)');
+    const cols = 9, cw = VW / cols, rows = Math.ceil(kinds.length / cols), chh = (VH - 30) / rows;
+    kinds.forEach((k, i) => {
+      const info = Art.propInfo(k);
+      const cx = (i % cols) * cw + cw / 2, cy = 30 + Math.floor(i / cols) * chh;
+      ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(cx - cw / 2 + 2, cy + 2, cw - 4, chh - 4);
+      const region = (info.regions && info.regions[0]) || 'test';
+      const pw = info.size[0] * T, ph = info.size[1] * T;
+      const sc = Math.min(1, (cw - 20) / (pw + 20), (chh - 26) / (ph + 16));
+      const top = info.anchor === 'top';
+      const fy = top ? cy + 8 : cy + chh - 18;
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(cx - cw / 2 + 8, fy); ctx.lineTo(cx + cw / 2 - 8, fy); ctx.stroke();
+      Art.drawDecorProp(ctx, k, cx, fy, { region, scale: sc, seed: 7, len: top ? Math.min(60, (chh - 40) / sc * 0.4) : undefined }, t);
+      ctx.fillStyle = '#aab0bc'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(k, cx, cy + chh - 5);
+    });
+  }
+  function charSheet(t) {
+    t = t === undefined ? 1.3 : t;
+    sheetBg('GUTTERLIGHT — G.Art.char helpers: waxBody variants · eyes · wick + flame kinds · Pall smoke · cloth · slash · spark · ring · puddle');
+    const C = Art.char;
+    ctx.textAlign = 'center'; ctx.font = '11px monospace';
+    const label = (s, x, y) => { ctx.fillStyle = '#aab0bc'; ctx.fillText(s, x, y); };
+    // row 1: body variants with different eyes
+    const variants = ['candle', 'stub', 'taper', 'pillar', 'slumped', 'round'];
+    const eyeKinds = ['slit', 'round', 'pinprick', 'hollow', 'pinprick', 'ember'];
+    const colors = [C.COLORS.ivory, '#e0c8a0', C.COLORS.gold, C.COLORS.blackWax, C.COLORS.snuffed, '#d8a080'];
+    variants.forEach((v, i) => {
+      const x = 90 + i * 150, y = 190;
+      C.shadow(ctx, x, y, 26);
+      const b = C.waxBody(ctx, x, y, 44, v === 'stub' ? 44 : v === 'taper' ? 92 : 72, { variant: v, color: colors[i], drips: 3, seed: i + 1, rim: '#ffe8c0', light: -1 });
+      C.eyes(ctx, b.cx + 2, b.top + b.h * 0.3, { kind: eyeKinds[i], size: 12, gap: 13 });
+      const tip = C.wick(ctx, b.cx, b.top + 2, { len: 8, bend: -1, ember: i === 4 });
+      if (i !== 4 && i !== 3) Art.flame(ctx, tip[0], tip[1] + 1, 20, ['blue', 'orange', 'gold', 'red', 'pale', 'red'][i], t, i);
+      if (i === 4) C.pallSmoke(ctx, tip[0], tip[1], t, { count: 6, height: 70, seed: 2 });
+      label(v + ' / ' + eyeKinds[i], x, 214);
+    });
+    // Wickling composite with scarf
+    const wx = 1060, wy = 190;
+    const sc = C.cloth.create(4, 9);
+    for (let i = 0; i < 90; i++) C.cloth.update(sc, wx - 8, wy - 44, 1 / 60, { gravity: 420, wind: -900 });
+    C.cloth.draw(ctx, sc, { width: 10, color: C.COLORS.scarf });
+    C.shadow(ctx, wx, wy, 18);
+    ctx.fillStyle = C.COLORS.outline; ctx.fillRect(wx - 8, wy - 10, 6, 10); ctx.fillRect(wx + 2, wy - 10, 6, 10);
+    C.waxen(ctx, wx, wy - 7, 30, 46, { flame: 'blue', drips: 3, seed: 3, rim: '#bfe4ff', eyes: { kind: 'slit', size: 11, gap: 10 } }, t);
+    label('waxen() + cloth (Wickling)', wx, 214);
+    const sx = 1200;
+    C.waxen(ctx, sx, 190, 34, 50, { variant: 'slumped', color: C.COLORS.snuffed, shadeAmt: 0.5, eyes: { kind: 'pinprick', size: 12, gap: 12 }, flame: null, ember: false, seed: 9 }, t);
+    C.pallSmoke(ctx, sx, 134, t, { count: 6, height: 60, seed: 4 });
+    label('Snuffed', sx, 214);
+    // row 2: flame kinds
+    const kinds = Object.keys(Art.FLAMES);
+    kinds.forEach((k, i) => {
+      const x = 80 + i * 92, y = 330;
+      ctx.fillStyle = '#141016'; ctx.fillRect(x - 1, y, 2, 10);
+      Art.flame(ctx, x, y + 1, 34, k, t, i);
+      label(k, x, 356);
+    });
+    // eyes blink sequence
+    for (let i = 0; i < 5; i++) { const x = 760 + i * 60; ctx.fillStyle = C.COLORS.ivory; ctx.beginPath(); ctx.arc(x, 316, 22, 0, Math.PI * 2); ctx.fill(); C.eyes(ctx, x, 314, { kind: 'slit', size: 16, gap: 14, blink: i / 4 }); }
+    label('blink 0 → 1', 880, 356);
+    // smoke trail
+    const tr = C.smokeTrail.create(30);
+    for (let i = 0; i < 60; i++) { C.smokeTrail.emit(tr, 1100 + i * 2.5, 330, { rise: 20, life: 1.6, size: 5 }); C.smokeTrail.update(tr, 1 / 30); }
+    C.smokeTrail.draw(ctx, tr); label('smokeTrail', 1180, 356);
+    // row 3: slash progress
+    for (let i = 0; i < 6; i++) {
+      const x = 90 + i * 140, y = 470;
+      C.slash(ctx, x - 20, y, 54, 0, i / 6, { arc: 2.4, width: 16 });
+      label('slash p=' + (i / 6).toFixed(2), x, 540);
+    }
+    // sparks & rings
+    for (let i = 0; i < 4; i++) { const x = 940 + i * 90; C.hitSpark(ctx, x, 460, i / 4, { size: 30, seed: 3 }); label('spark ' + (i / 4).toFixed(2), x, 540); }
+    // row 4: rings, puddles, glow, shapes
+    for (let i = 0; i < 4; i++) { const x = 90 + i * 140; C.ring(ctx, x, 630, 60, i / 4 + 0.05, { width: 8 }); label('ring ' + (i / 4 + 0.05).toFixed(2), x, 706); }
+    for (let i = 0; i < 3; i++) { const x = 680 + i * 110; C.puddle(ctx, x, 650, (i + 1) / 3, { wick: i === 2, color: i === 1 ? C.COLORS.snuffed : C.COLORS.ivory }); label('puddle ' + ((i + 1) / 3).toFixed(2), x, 706); }
+    const gp = new Path2D(); gp.moveTo(1050, 680); gp.quadraticCurveTo(1060, 590, 1110, 580); gp.quadraticCurveTo(1170, 600, 1160, 680); gp.closePath();
+    C.shape(ctx, gp, { fill: C.COLORS.blackWax, box: [1050, 580, 1170, 680], rim: '#ff8a7a', light: -1 });
+    C.eyes(ctx, 1110, 625, { kind: 'ember', size: 14, gap: 16 });
+    label('shape + rim + ember eyes', 1110, 706);
+    Art.glow(ctx, 1230, 630, 50, '#ffd060', 0.8); label('glow', 1230, 706);
+  }
+
+  // ---- interactive viewer (open tools/art_lab.html in a browser) ------------------------------
+  if (!qs.get('auto')) {
+    let region = qs.get('region') || 'guttered', ri = +(qs.get('room') || 0), ci = 0, cam = null, room = null, player = null, t = 0;
+    const hud = document.getElementById('hud');
+    const keys = {};
+    const load = () => { room = getRoom(ri, region); Art.prepareRoom(room); cam = camFor(room, ci); player = playerFor(room, ci); };
+    addEventListener('keydown', (e) => {
+      keys[e.key] = true;
+      const n = '1234567890'.indexOf(e.key);
+      if (n >= 0) { region = REGIONS[n]; load(); }
+      if (e.key === 'r') { ri = (ri + 1) % globalThis.ART_LAB_ROOMS.length; ci = 0; load(); }
+      if (e.key === 'c') { ci = (ci + 1) % room.def.cams.length; load(); }
+      if (e.key.startsWith('Arrow')) e.preventDefault();
+    });
+    addEventListener('keyup', (e) => { keys[e.key] = false; });
+    load();
+    const loop = () => {
+      t += 1 / 60;
+      const sp = 9;
+      if (keys.ArrowLeft) cam.x -= sp; if (keys.ArrowRight) cam.x += sp; if (keys.ArrowUp) cam.y -= sp; if (keys.ArrowDown) cam.y += sp;
+      cam.x = Math.max(0, Math.min(room.widthPx - VW, cam.x)); cam.y = Math.max(0, Math.min(room.heightPx - VH, cam.y));
+      player.x = cam.x + VW / 2;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      frame(room, cam, t, player, {});
+      hud.textContent = region + ' / ' + room.def.id + '  [1-0 region, r room, c cam, arrows pan]';
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+  LAB.ready = true;
+})();
+</script>
+</body>
+</html>

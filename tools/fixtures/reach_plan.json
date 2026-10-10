@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "cell": { "w": 16, "h": 9 },
+  "generatedBy": "hand-written fixture for tools/reach.js (node tools/reach.js --plan tools/fixtures/reach_plan.json --data tools/fixtures/reach_rooms.js --dev --expect). Entries with \"expect\": \"fail\" are KNOWN-IMPOSSIBLE traversals that reach.js must report as impossible.",
+  "abilityOrders": [["dash", "grip", "oilcloak", "wings", "plunge"]],
+  "rooms": [
+    {
+      "id": "dev_01", "region": "test", "gx": 64, "gy": 954, "w": 80, "h": 18, "kind": "hub",
+      "exits": [
+        { "id": "W1", "side": "W", "pos": 13, "size": 3, "to": "dev_water", "toExit": "E1" },
+        { "id": "E1", "side": "E", "pos": 13, "size": 3, "to": "dev_02", "toExit": "W1" },
+        { "id": "N1", "side": "N", "pos": 4, "size": 4, "to": "dev_shaft", "toExit": "S1" },
+        { "id": "S1", "side": "S", "pos": 70, "size": 4, "to": "dev_below", "toExit": "N1" }
+      ],
+      "paths": [
+        { "from": "W1", "to": "E1", "requires": [] },
+        { "from": "E1", "to": "W1", "requires": [] },
+        { "from": "W1", "to": "N1", "requires": [] },
+        { "from": "N1", "to": "W1", "requires": [] },
+        { "from": "W1", "to": "S1", "requires": [] },
+        { "from": "S1", "to": "W1", "requires": [] },
+        { "from": "E1", "to": "N1", "requires": [] },
+        { "from": "N1", "to": "E1", "requires": [] },
+        { "from": "E1", "to": "S1", "requires": [] },
+        { "from": "S1", "to": "E1", "requires": [] },
+        { "from": "N1", "to": "S1", "requires": [] },
+        { "from": "S1", "to": "N1", "requires": [] }
+      ],
+      "spots": [
+        { "id": "sconce:dev_sconce", "from": "W1", "requires": [] },
+        { "id": "lore:lore_dev_1", "from": "W1", "requires": [] },
+        { "id": "npc:thrum", "from": "W1", "requires": [] },
+        { "id": "shrine:dash", "from": "W1", "requires": [] },
+        { "id": "pickup:dev_hw1", "from": "W1", "requires": [], "note": "the 1..7 ledges form a staircase (each slab 1 higher, 3 apart): reachable with no abilities" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "dev_02", "region": "test", "gx": 144, "gy": 954, "w": 96, "h": 27, "kind": "corridor",
+      "exits": [ { "id": "W1", "side": "W", "pos": 13, "size": 3, "to": "dev_01", "toExit": "E1" } ],
+      "paths": [],
+      "spots": [
+        { "id": "tile:28,15", "from": "W1", "requires": [], "note": "past the 4 and 6 gaps" },
+        { "id": "tile:43,15", "from": "W1", "requires": ["dash"], "note": "past the 9 gap: dash needed (gate check: impossible without)" },
+        { "id": "tile:43,15", "from": "W1", "requires": ["wings"], "note": "alternative: running jump + double jump also clears 9" },
+        { "id": "tile:62,15", "from": "W1", "requires": ["dash"], "expect": "fail", "note": "past the 12 gap with dash: KNOWN IMPOSSIBLE" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "dev_water", "region": "test", "gx": 0, "gy": 954, "w": 64, "h": 27, "kind": "room",
+      "exits": [ { "id": "E1", "side": "E", "pos": 13, "size": 3, "to": "dev_01", "toExit": "W1" } ],
+      "paths": [],
+      "spots": [
+        { "id": "tile:26,15", "from": "E1", "requires": ["oilcloak"], "note": "across the 18-wide pool: oilcloak (gate check: impossible without)" },
+        { "id": "tile:26,15", "from": "E1", "requires": ["dash"], "expect": "fail", "note": "wide water with dash only: KNOWN IMPOSSIBLE" },
+        { "id": "pickup:dev_urn", "from": "E1", "requires": ["oilcloak"], "note": "through the low flooded tunnel" },
+        { "id": "tile:4,15", "from": "E1", "requires": ["dash", "wings"], "expect": "fail", "note": "flooded tunnel (2 tiles of air) without oilcloak: KNOWN IMPOSSIBLE" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "dev_shaft", "region": "test", "gx": 64, "gy": 918, "w": 32, "h": 36, "kind": "shaft",
+      "exits": [ { "id": "S1", "side": "S", "pos": 4, "size": 4, "to": "dev_01", "toExit": "N1" } ],
+      "paths": [],
+      "spots": [
+        { "id": "tile:14,5", "from": "S1", "requires": ["grip"], "note": "top of the 29-tile grippable pillar (gate check: impossible without grip)" },
+        { "id": "tile:27,27", "from": "S1", "requires": ["grip"], "note": "east bay shelf, only over the pillars" },
+        { "id": "tile:14,5", "from": "S1", "requires": ["wings", "dash"], "expect": "fail", "note": "climbing 29 tiles without grip: KNOWN IMPOSSIBLE" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "dev_below", "region": "test", "gx": 64, "gy": 972, "w": 80, "h": 18, "kind": "room",
+      "exits": [ { "id": "N1", "side": "N", "pos": 70, "size": 4, "to": "dev_01", "toExit": "S1" } ],
+      "paths": [],
+      "spots": [
+        { "id": "lever:dev_lv1", "from": "N1", "requires": [] },
+        { "id": "tile:40,15", "from": "N1", "requires": [], "note": "behind the full-height B wall (break it with the Brand)" },
+        { "id": "tile:20,9", "from": "N1", "requires": [], "note": "on the shelf via the step platform" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "fx_gap10", "region": "test", "gx": 0, "gy": 1899, "w": 64, "h": 27, "kind": "gate",
+      "exits": [
+        { "id": "W1", "side": "W", "pos": 11, "size": 3, "to": "none", "toExit": "E1" },
+        { "id": "E1", "side": "E", "pos": 11, "size": 3, "to": "none", "toExit": "W1" }
+      ],
+      "paths": [
+        { "from": "W1", "to": "E1", "requires": ["dash"] },
+        { "from": "W1", "to": "E1", "requires": ["wings"] },
+        { "from": "E1", "to": "W1", "requires": ["dash"] },
+        { "from": "E1", "to": "W1", "requires": ["grip"], "expect": "fail", "note": "glazed pit sides: grip alone does not cross: KNOWN IMPOSSIBLE" }
+      ],
+      "spots": [
+        { "id": "tile:40,13", "from": "W1", "requires": [], "expect": "fail", "note": "10-tile gap without dash: KNOWN IMPOSSIBLE" },
+        { "id": "tile:40,13", "from": "W1", "requires": ["grip"], "expect": "fail", "note": "glazed pit walls cannot be climbed: KNOWN IMPOSSIBLE" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "fx_climb", "region": "test", "gx": 64, "gy": 1899, "w": 96, "h": 27, "kind": "room",
+      "exits": [ { "id": "W1", "side": "W", "pos": 20, "size": 3, "to": "none", "toExit": "E1" } ],
+      "paths": [],
+      "spots": [
+        { "id": "tile:9,18", "from": "W1", "requires": [], "note": "top of the 4-tall glazed block" },
+        { "id": "tile:31,15", "from": "W1", "requires": ["wings"], "note": "top of the 7-tall glazed block (gate check: impossible without wings)" },
+        { "id": "tile:31,15", "from": "W1", "requires": ["dash"], "expect": "fail", "note": "7-tile ledge without wings: KNOWN IMPOSSIBLE" },
+        { "id": "tile:61,10", "from": "W1", "requires": ["grip"], "expect": "fail", "note": "climbing a GLAZED wall: KNOWN IMPOSSIBLE" },
+        { "id": "tile:61,10", "from": "W1", "requires": ["dash", "grip", "wings"], "expect": "fail", "note": "12-tall glazed tower even with dash + wings: KNOWN IMPOSSIBLE" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "fx_dive", "region": "test", "gx": 160, "gy": 1899, "w": 64, "h": 27, "kind": "room",
+      "exits": [ { "id": "W1", "side": "W", "pos": 11, "size": 3, "to": "none", "toExit": "E1" } ],
+      "paths": [],
+      "spots": [
+        { "id": "tile:30,24", "from": "W1", "requires": ["plunge"], "note": "under the D floor (gate check: impossible without plunge); the platforms lead back up" },
+        { "id": "geode:fx_geo_b", "from": "W1", "requires": [], "secret": true, "note": "behind the B wall" }
+      ],
+      "contents": []
+    },
+    {
+      "id": "fx_big", "region": "test", "gx": 224, "gy": 1899, "w": 64, "h": 36, "kind": "hub",
+      "exits": [
+        { "id": "E1", "side": "E", "pos": 8, "size": 3, "to": "none", "toExit": "W1" },
+        { "id": "W1", "side": "W", "pos": 30, "size": 3, "to": "none", "toExit": "E1" },
+        { "id": "N1", "side": "N", "pos": 30, "size": 4, "to": "none", "toExit": "S1" }
+      ],
+      "paths": [
+        { "from": "W1", "to": "E1", "requires": ["grip"] },
+        { "from": "E1", "to": "W1", "requires": [] },
+        { "from": "W1", "to": "N1", "requires": [] },
+        { "from": "N1", "to": "W1", "requires": [] },
+        { "from": "N1", "to": "E1", "requires": ["grip"] },
+        { "from": "E1", "to": "N1", "requires": [] }
+      ],
+      "spots": [
+        { "id": "geode:fx_geo1", "from": "W1", "requires": [], "secret": true }
+      ],
+      "contents": []
+    },
+    {
+      "id": "fx_order", "region": "test", "gx": 288, "gy": 1899, "w": 64, "h": 27, "kind": "room",
+      "exits": [ { "id": "W1", "side": "W", "pos": 20, "size": 3, "to": "none", "toExit": "E1" } ],
+      "paths": [],
+      "spots": [
+        { "id": "tile:38,15", "from": "W1", "requires": ["grip"], "note": "pillar top: a grip reward that LEAKS with dash (dash precedes grip in every order) - reach must warn GATE LEAK" },
+        { "id": "tile:38,15", "from": "W1", "requires": [], "expect": "fail", "note": "without any ability it is impossible (the old requires-minus-X check would pass)" }
+      ],
+      "contents": []
+    }
+  ]
+}

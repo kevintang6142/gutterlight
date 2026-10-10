@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+// tools/gen/arena_kilnmother.js — builds ch_09 "The Kiln Heart" (THE KILN MOTHER's arena) with tools/lib/roomkit.js,
+// exactly per design/world_plan.json, and emits src/data/arenas/kilnmother.js. Owner: boss-kilnmother.
+//   node tools/gen/arena_kilnmother.js [--print]
+//
+// Plan notes (ch_09, 64x18): single entrance W1 (col 0, rows 12-14). Floor top row 15 (rows 15-17 solid), flat across
+// cols 1-62, plain solid (her molten waves and heated floor sections are attacks, not tiles). Ceiling rows 0-2. Two
+// one-way platforms (row 10) at cols 14-21 and 42-49 to escape floor waves. arena_gate (w1,h4) at col 2 rows 11-14
+// under a solid lintel at row 10. arena: boss kilnmother, bx 48, by 14, trigger cols 10-30 rows 6-14. Moldlings pour
+// from vents at cols 58-62. Reward (automatic, G.Boss): Seal of the Kiln + 300 cinders.
+// Deviations (see docs/api/boss-kilnmother.md): decks at row 11 (row 10 is out of jump reach); cols 57-62 are the solid
+// forge wall at her back (no alcove behind her) and the vents hang from the vault over her back (cols 54-56).
+'use strict';
+const path = require('path');
+const RK = require(path.join(__dirname, '..', 'lib', 'roomkit'));
+
+const PLAT_ROW = 11;
+
+function ch09() {
+  const r = RK.room('ch_09');                    // 64x18; W1 col 0 rows 12-14
+  // The furnace chamber: air rows 3-14 across cols 3-56 (ceiling rows 0-2 and floor rows 15-17 stay solid). Cols 57-63
+  // stay solid: the forge wall at her back (QA: the 6-col alcove behind her was a corner trap — her pour/breath went into
+  // the wall, lob rings crowded a 200-px pocket, the camera pinned to the edge). She stands 20 px off it (< a player's
+  // width), so nothing fits behind her.
+  r.carve(3, 3, 54, 12);
+  // West door: the doorway tunnel (cols 0-1, rows 12-14, carved by openExits) and the gate slot (col 2, rows 11-14)
+  // under the solid lintel (col 2, row 10) — cols 0-2 above stay solid wall.
+  r.openExits();
+  r.carve(0, 12, 3, 3);
+  r.carve(2, 11, 1, 1);
+  // Flue throat in the vault over her forge (dark dead-end notch under her flue hood; the moldling vents hang beside it).
+  for (const [c, w] of [[52, 2]]) r.carve(c, 1, w, 2);
+  // One-way iron decks (escape the floor waves; the east one stands at her chest).
+  r.platform(14, PLAT_ROW, 8);
+  r.platform(42, PLAT_ROW, 8);
+
+  // ---- encounter
+  r.put(2, 14, { type: 'arena_gate', id: 'ch_ag9', w: 1, h: 4, side: 'right' });   // shuts behind the player
+  r.add({ type: 'arena', boss: 'kilnmother', bx: 48, by: 14, trigger: [10, 6, 30, 14], x: 20, y: 14 });
+  // The forge itself (drawn by boss-kilnmother's event script): the great furnace mouth on the back wall, the vents
+  // at cols 58-62, the pour channels; it glows hotter in her second phase and goes cold after her defeat.
+  r.add({ type: 'event', script: 'kiln_forge', x: 32, y: 14, w: 1, h: 1, z: -8 });
+
+  // ---- dressing (back layer only; nothing that reads as a ledge or a hazard)
+  r.add({ type: 'decor', kind: 'chain', x: 9, y: 3, len: 150, hook: true, layer: 'back' });
+  r.add({ type: 'decor', kind: 'chain', x: 27, y: 3, len: 110, layer: 'back' });
+  r.add({ type: 'decor', kind: 'ladle', x: 33, y: 3, len: 40, layer: 'back' });
+  r.add({ type: 'decor', kind: 'chain', x: 38, y: 3, len: 170, hook: true, layer: 'back' });
+  // iron stanchions under the free-standing decks (so they read as built, not floating)
+  for (const c of [15, 20, 43, 48]) r.add({ type: 'decor', kind: 'pipe_v', x: c, y: 14, len: 188, dim: 0.55, layer: 'back' });
+  r.add({ type: 'decor', kind: 'mold_stack', x: 6, y: 14, layer: 'back' });
+  r.add({ type: 'decor', kind: 'anvil', x: 11, y: 14, layer: 'back' });
+  r.add({ type: 'decor', kind: 'rubble', x: 24, y: 14, layer: 'back' });
+  r.add({ type: 'decor', kind: 'gear', x: 30, y: 14, dim: 0.45, layer: 'back' });
+  r.add({ type: 'decor', kind: 'mold_stack', x: 39, y: 14, flip: true, layer: 'back' });
+  // lights: the door brazier, the deck grates, the furnace wash
+  r.add({ type: 'decor', kind: 'brazier', x: 4, y: 14, layer: 'back' });
+  r.add({ type: 'light', x: 4, y: 13, r: 4, color: '#ff9a50', intensity: 0.5, flicker: true });
+  r.add({ type: 'light', x: 18, y: 9, r: 5, color: '#ff8a3a', intensity: 0.3, flicker: true });
+  r.add({ type: 'light', x: 46, y: 9, r: 5, color: '#ff8a3a', intensity: 0.3, flicker: true });
+  r.add({ type: 'light', x: 32, y: 7, r: 12, color: '#e0702c', intensity: 0.22 });
+  r.add({ type: 'light', x: 56, y: 8, r: 10, color: '#ff7a2a', intensity: 0.35, flicker: true });
+  return r;
+}
+
+const r = ch09();
+const { errors, warnings } = r.check();
+for (const w of warnings) console.log('warning: ' + w);
+if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
+const def = r.toDef({ theme: { bg: 'interior', decor: 0.5, fg: 0.6 }, bgSeed: 9, dark: 0.42 });
+const out = RK.emit('chandlery', [def], 'src/data/arenas/kilnmother.js', "arena ch_09 (THE KILN MOTHER) — generated by tools/gen/arena_kilnmother.js");
+console.log('wrote ' + path.relative(path.join(__dirname, '..', '..'), out));
+if (process.argv.includes('--print')) console.log(r.ascii());

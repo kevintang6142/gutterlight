@@ -1,0 +1,20 @@
+{
+  "name": "gutterlight-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Dev-only tooling for Gutterlight (validation, headless tests, build). The game itself has zero dependencies.",
+  "scripts": {
+    "test": "node test_all.js",
+    "test:quick": "node test_all.js --quick",
+    "audit": "node audit.js",
+    "e2e": "node e2e.js",
+    "build": "node build.js",
+    "validate": "node validate.js",
+    "reach": "node reach.js",
+    "smoke": "node smoke.js",
+    "selftest": "node fixtures/selftest.js"
+  },
+  "dependencies": {
+    "playwright": "1.56.1"
+  }
+}
