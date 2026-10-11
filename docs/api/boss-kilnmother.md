@@ -50,6 +50,29 @@ grey over 2.6 s with steam, the flame gutters → ember burst, victory recorded 
 Her husk stays: the entity until the room is left, then the `kiln_forge` script (flag `boss:kilnmother`; facing in
 flag `kiln_rest_f`).
 
+## Telegraphs by mode (difficulty modes)
+
+`teleOn()` (top of `kilnmother.js`) = `G.telegraphsOn()` (falls back to `G.game.telegraphs()`, default easy). It is read
+**only at draw time** (plus purely cosmetic particle emission): every hitbox, timing, wind-up length and RNG draw that
+affects gameplay is identical in all modes. **Easy** looks and plays exactly as before. **Standard / hardcore** below
+(hardcore = standard's telegraphs).
+
+| Attack | Easy (explicit, as before) | Standard / hardcore | Diegetic tell (all modes; lead time) |
+|---|---|---|---|
+| `pour` | — (no marker) | unchanged | great ladle raised high + `kiln_gurgle` + shake, 0.64 s (P2 0.55; 2nd pour re-raise 0.5 s); the stream and the rolling wave are visible in flight |
+| `lob` | glowing landing ring + fill + glow on each spot for the whole ~1 s flight | **kept-subtle**: a thin (2 px) faint ring, no fill / glow, only over the last 0.55 s of each gob's fall (`LOB_RING_STD`). *Why*: 3–5 high simultaneous arcs (they rise toward the vault, often above the view) land 150 px apart with 60-px splashes — the 90-px safe gaps are narrower than a dash and cannot be read from the arcs alone in time | ladle dipped to the chest, scoop 0.58 s (P2 0.5) + `kiln_fling`; gobs visible in flight |
+| `heat` | tall pulsing gradient (84–104 px), pop flash, 6-px hot strip, end brackets, seams, motes | **kept-subtle** (`KilnHeat.drawWarnSubtle`): no brackets, no pop flash, a short 44-px glow + 5-px strip of the floor plates heating, glowing plate seams, fewer motes. *Why*: the flare rises out of the floor with no visible source, and the phase-2 complementary set's safe sections cannot be read otherwise | she stokes the furnace (mouth blazes, rising drone `kiln_heat`) 0.5 s, stamps (`kiln_slam` + shake) — then 0.95 s (P2 0.82 / 1.25 s) of heating plates + floor light |
+| `sweep` | floor strip (gradient, hot line, white line) + end bracket + light, through each wind-up | **removed** (`drawSweepTell` instead) | ladle drawn back + `kiln_scrape` + shake, 0.56 s (P2 0.52; return 0.55 s); **added (standard)**: the drawn-back bowl glows white-hot, lights the floor and sheds sparks + molten drips (from `atk_sweep`, every 0.05 s of each wind-up) |
+| `slam` | — | unchanged | ladle heaved overhead + iron creak, 0.72 s (P2 0.66) |
+| `brood` | landing ring under each falling moldling | **removed** (a moldling is harmless while it lands and forms, 0.5 s) | back ladle to the vents, low groan, vents glow 0.6 s; the gob is visible in flight |
+| moldling lunge | — | unchanged | swelling gurgle 0.45 s (`telegraph`: swell, white eyes, glow, `mold_gurgle`) |
+| `breath` | shimmering heat band + wavering edge lines along the jet's line | **removed** (`drawBreathTell` instead) | rears back, arms flung up, core white-hot, roaring intake `kiln_inhale` + shake, 0.72 s; **added (standard)**: the core's glow swells (white heart) and embers are drawn into it from around her chest — the jet's source/height |
+| `grate` | — | unchanged | (transition, no damage) |
+
+Verified (module tele-bosses2, `test-output/tele-bosses2/`): contact sheets easy vs standard (`cmp_k_*.png`);
+`qa-boss-kilnmother/test.js hit dodge flow` copy run with `?mode=standard` and `?mode=easy`: ALL PASS (79) each;
+`enemy_selftest --boss kilnmother` in both modes: ALL PASS (11). (The original `boss-kilnmother/test.js` fails `hit:slam floor P1/P2` in every mode — stale since the QA slam-underside fix; use the QA copy.)
+
 ## Room `ch_09` (per the plan notes)
 
 64×18, floor top row 15 (rows 15–17) flat across cols 1–62 (no lava tiles), ceiling rows 0–2 with a flue throat at

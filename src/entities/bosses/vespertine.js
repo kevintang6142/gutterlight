@@ -29,6 +29,10 @@
     if (G.Art && G.Art.glow) G.Art.glow(ctx, x, y, r, col, a);
     else if (G.fx && G.fx.glowAt) G.fx.glowAt(ctx, x, y, r, col, a);
   };
+  // Difficulty modes: EXPLICIT telegraphs (the dust clouds' warning rings, the dash aim line, the mothlings' aim
+  // streak) are drawn only while this is true (easy). Gameplay timing never depends on it. Per-attack decisions and
+  // the diegetic tells: docs/api/boss-vespertine.md "Telegraphs by mode".
+  const teleOn = () => (G.telegraphsOn ? G.telegraphsOn() : (!(G.game && G.game.telegraphs) || G.game.telegraphs() !== false));
 
   const ID = 'vespertine';
   const HP = 600;
@@ -421,12 +425,16 @@
       if (!this._warned && this.age >= this.T1) {
         this._warned = true;
         const R = this.R * 0.8;
-        if (this.room) G.warnZone(this.room, { x: this.tx - R, y: this.ty - R, w: R * 2, h: R * 2, dur: this.T2 - this.T1, color: PAL.tele, style: 'circle' });
+        // the warning circle is an explicit marker: G.warnZone draws it in easy only (cue 'none': the settling,
+        // thickening haze itself + the 'vesp_settle' sound are the standard-mode tell)
+        if (this.room) G.warnZone(this.room, { x: this.tx - R, y: this.ty - R, w: R * 2, h: R * 2, dur: this.T2 - this.T1, color: PAL.tele, style: 'circle', cue: 'none' });
         G.sfxAt('vesp_settle', this.tx, { vol: 0.5 });
       }
       if (this.harmful) this.touchPlayer();
       if (G.lighting) G.lighting.add({ x: this.cx, y: this.cy, r: this.R * 1.6, color: PAL.glow, intensity: this.age < this.T1 ? 0.18 : this.age < this.T3 ? 0.5 : 0.3, glow: false });
-      if (G.fx && this.age > this.T1 && this.age < this.T3 && Math.random() < dt * 14) {
+      // standard / hardcore: while it settles (warn) the cloud sheds twice the glittering scales — the diegetic tell
+      const glit = this.age > this.T1 && this.age < this.T2 && !teleOn() ? 34 : 14;
+      if (G.fx && this.age > this.T1 && this.age < this.T3 && Math.random() < dt * glit) {
         const a = rnd(0, TAU), d = rnd(0.2, 0.9) * this.R;
         G.fx.spawn({ x: this.cx + Math.cos(a) * d, y: this.cy + Math.sin(a) * d, vx: rnd(-20, 20), vy: rnd(-30, 5), life: rnd(0.5, 1.1), size: rnd(1.5, 3), color: PAL.dustLight, alpha: 0.75, add: true });
       }
@@ -443,8 +451,10 @@
     burstFx() { if (G.fx) G.fx.burst('smoke', this.cx, this.cy, { count: 6, color: PAL.dustMid, alpha: 0.4, size: 22 }); }
     draw(ctx, t) {
       const spr = dustSprite();
-      const ph = this.phase;
-      const dens = ph === 'travel' ? 0.55 : ph === 'warn' ? 0.35 + 0.45 * ((this.age - this.T1) / (this.T2 - this.T1)) : ph === 'active' ? 1 : clamp(1 - (this.age - this.T3) / 0.8, 0, 1) * 0.8;
+      const ph = this.phase, tele = teleOn();
+      // standard / hardcore: with no warning ring the settling haze itself must read, so it thickens from a denser start
+      const wk = (this.age - this.T1) / (this.T2 - this.T1);
+      const dens = ph === 'travel' ? 0.55 : ph === 'warn' ? (tele ? 0.35 + 0.45 * wk : 0.6 + 0.4 * wk) : ph === 'active' ? 1 : clamp(1 - (this.age - this.T3) / 0.8, 0, 1) * 0.8;
       const R = ph === 'travel' ? this.R * (0.45 + 0.4 * (this.age / this.T1)) : this.R;
       ctx.save();
       if (spr) {
@@ -457,12 +467,13 @@
         }
       } else { ctx.globalAlpha = dens * 0.7; ctx.fillStyle = PAL.dust; ctx.beginPath(); ctx.arc(this.cx, this.cy, R, 0, TAU); ctx.fill(); }
       ctx.restore();
-      // a violet rim so the harmful edge reads in the dark
-      if (ph !== 'travel') {
+      // a violet rim so the harmful edge reads in the dark (standard / hardcore: no rim while it warns; a fainter
+      // rim on the live cloud only — KEPT-SUBTLE, see the docs)
+      if (ph !== 'travel' && (tele || ph !== 'warn')) {
         const pulse = ph === 'warn' ? 0.5 + 0.5 * Math.sin(this.age * 22) : 0.6;
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = (ph === 'fade' ? dens * 0.4 : ph === 'warn' ? 0.25 + 0.35 * pulse : 0.45);
+        ctx.globalAlpha = (ph === 'fade' ? dens * 0.4 : ph === 'warn' ? 0.25 + 0.35 * pulse : 0.45) * (tele ? 1 : 0.75);
         ctx.strokeStyle = PAL.glow; ctx.lineWidth = ph === 'active' ? 2.5 : 1.5;
         ctx.setLineDash(ph === 'active' ? [10, 8] : [4, 10]);
         ctx.lineDashOffset = -t * 30;
@@ -471,6 +482,7 @@
         ctx.restore();
       }
       glow(ctx, this.cx, this.cy, R * 0.9, PAL.glowDeep, 0.1 * dens);
+      if (!tele && ph === 'warn') glow(ctx, this.cx, this.cy, R * 0.85, PAL.glow, 0.08 + 0.12 * wk);   // the settling haze glows faintly from within
     }
   }
   G.registerProjectile('vesp_dust', DustCloud, { r: 30, gravity: 0, life: 6, color: PAL.dustMid, damage: 1 });
@@ -1317,7 +1329,7 @@
         }
       }
       const d = this.stateData;
-      if (this.is('dash') && d && d.stage === 'tele' && d.ux != null) {
+      if (this.is('dash') && d && d.stage === 'tele' && d.ux != null && teleOn()) {
         const u = this.stateTime - d.t0, k = clamp(u / Math.max(0.1, d.w), 0, 1);
         const len = 1400, x1 = this.cx + d.ux * len, y1 = this.cy + d.uy * len;
         ctx.save();
@@ -1342,6 +1354,14 @@
       });
       if (clip) ctx.restore();
       if (this.dying) this.drawSwarm(ctx, t);
+      // standard / hardcore dash tell (diegetic, replaces the aim line): her head and blade-swept wings flare white at
+      // the lock (0.34 s before she goes), on top of the 'vesp_moth' lock chirp; her body is already turned along the line
+      const d = this.stateData;
+      if (this.is('dash') && d && d.stage === 'tele' && d.locked && d.ux != null && !teleOn()) {
+        const pulse = 0.5 + 0.5 * Math.sin(t * 40);
+        glow(ctx, this.cx + d.ux * 34, this.cy + d.uy * 34, 70, '#ffffff', 0.55 + 0.3 * pulse);
+        glow(ctx, this.cx, this.cy, 150, PAL.aim, 0.22 + 0.1 * pulse);
+      }
     }
   }
   G.Boss.register('vespertine', Vespertine);       // literal id: tools/lib/registry.js scans for it
@@ -1455,11 +1475,14 @@
       const x = this.cx, y = this.cy;
       const aim = this.is('aim'), dart = this.is('dart');
       const f = dart ? 0.25 : 0.3 + 0.7 * Math.abs(Math.sin(this.flap));
-      const tilt = dart ? Math.atan2(this.vy, this.vx) + Math.PI / 2 : clamp(this.vx / 900, -0.4, 0.4);
+      // standard / hardcore: once its aim locks a mothling turns its head along the line (diegetic, replaces the streak)
+      const sd = this.stateData, lockedAim = aim && sd && sd.ux != null && sd.w && this.stateTime >= sd.w * 0.52 && !teleOn();
+      const tilt = dart ? Math.atan2(this.vy, this.vx) + Math.PI / 2 : lockedAim ? Math.atan2(sd.uy, sd.ux) + Math.PI / 2 : clamp(this.vx / 900, -0.4, 0.4);
       ctx.save();
       ctx.globalAlpha *= this.alpha;
       ctx.translate(x, y); ctx.rotate(tilt);
       glow(ctx, 0, 0, aim ? 40 : 26, PAL.glow, aim ? 0.45 + 0.25 * Math.sin(this.stateTime * 30) : 0.22);
+      if (lockedAim) glow(ctx, 0, -6, 22, '#ffffff', 0.6);   // the lock glint on its head
       for (const s of [-1, 1]) {
         ctx.save(); ctx.scale(s * f, 1);
         ctx.fillStyle = PAL.mothDark; ctx.strokeStyle = PAL.outline; ctx.lineWidth = 1.6;
@@ -1480,7 +1503,7 @@
     draw(ctx, t) {
       if (!this.dying && !this.dead) {   // the locked aim streak (outside the hit-flash silhouette)
         const sd = this.stateData;
-        if (this.is('aim') && sd && sd.ux != null && sd.w && this.stateTime >= sd.w * 0.52) {
+        if (this.is('aim') && sd && sd.ux != null && sd.w && this.stateTime >= sd.w * 0.52 && teleOn()) {
           ctx.save();
           ctx.globalCompositeOperation = 'lighter';
           ctx.globalAlpha *= 0.5 * this.alpha;

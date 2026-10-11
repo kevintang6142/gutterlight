@@ -104,3 +104,14 @@ the spear is out, a phase change and a stagger on the same hit, the door alcoves
 re-fight, the killing blow in every attack state, sable2 strings vs a reactive bot, frame cost. Timing sweeps (jump
 windows / reaction budgets): `hooksweep.js`, `hooktl.js` (triple-hook timeline), `lungesweep.js`, `lunge2sweep.js`,
 `wavesweep.js`, `divex.js` (dive lands on its mark). Fixes made in QA are listed in `test-output/qa-boss-sable/notes.md`.
+
+## Telegraphs by mode (difficulty modes; framework: docs/api/enemies.md §6.1)
+
+Easy draws everything exactly as before. Standard / hardcore hide the explicit markers (draw-time `G.telegraphsOn()`;
+timing identical in all modes). No kept exceptions: in both arenas (mb_07, ri_07) she stays in view at the vault.
+
+| attack | easy | standard / hardcore | diegetic tell (all modes unless noted) |
+|---|---|---|---|
+| `dive` | landing ring, white chevrons, dashed dive line | removed | deep crouch 0.52 / 0.46 s + `sable_leap`; the leap to the vault; **standard only (new)**: while she hangs (0.32–0.56 s) she flares — a halo around her + the hook's hot glint — replacing the mark; `sable_dive` as she drops; she dives at where the player stood when she started hanging |
+| `whirl` | dashed reach ring during the wind-up | removed | spear raised and spun up 0.62–0.45 s, `sable_smoke`, smoke gathering around her at the whirl's radius (particles) |
+| `lunge`, `hook`, `frost`, `rising`, `evade`, `flourish` | — (no explicit marker) | unchanged | wind-up pose + `telegraph()` glint + own sfx; hooks / frost lines visible in flight |

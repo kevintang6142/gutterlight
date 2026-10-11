@@ -327,6 +327,8 @@
         } : null,
         entities: room ? room.entities.filter((e) => !e.dead).map((e) => ({ type: e.type, kind: e.kind || (e.props && e.props.kind) || undefined, id: e.persistId || undefined, x: Math.round(e.x), y: Math.round(e.y) })) : [],
         ui: uiScreens(),
+        difficulty: pr && g.difficulty ? g.difficulty() : null,
+        broken: !!(pr && pr.broken),
         locks: g.lockReasons(),
         fade: Math.max(g.fadeAlpha, g.sysFadeAlpha),
         errors: G._errors.length,
@@ -337,6 +339,8 @@
     teleport(roomId, tx, ty) {
       const g = G.game;
       if (!g.progress) g.newGame(0);
+      // a snuffed hardcore run (or its game-over screen) is never brought back, not even by the debug teleport
+      if (g.progress.broken || g.mode === 'gameover') return false;
       const target = roomId || (g.room && g.room.id);
       if (!target || !G.World.getRoom(target)) { G.reportError(new Error('teleport: unknown room "' + roomId + '"'), 'debug.teleport'); return false; }
       if (g.mode !== 'play') g.mode = 'play';
@@ -376,6 +380,14 @@
       return g.giveItem(s, { silent: true });
     },
 
+    /** Set the current run's difficulty ('easy' | 'standard' | 'hardcore'; tests/debug only - the game never switches
+     *  mode mid-run). Never un-breaks a snuffed hardcore run. Returns the resulting mode. */
+    setMode(mode) {
+      const g = G.game, pr = g.progress;
+      if (!pr || !g.MODES || g.MODES.indexOf(mode) < 0 || pr.broken) return g.difficulty ? g.difficulty() : null;
+      pr.mode = mode;
+      return g.difficulty();
+    },
     god(on) { G.game.god = on === undefined ? true : !!on; return G.game.god; },
 
     spawn(props) {

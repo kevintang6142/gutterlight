@@ -99,6 +99,33 @@ cinders (+ chip burst), `progress.wisp = null` → Ember capacity restored; emit
 First death: on the first `respawn` event with `progress.wisp` set, `ui.wispHint` is toasted once (one
 toast per sentence) and flag `hint:wisp` is set.
 
+### Boss deaths: `G.wispSpotFor(death)`
+`death = {room, x, y, arenaActive, bossId}` (px, room-local) → `{room, x, y}` (px, the centre of a standing
+player on the chosen tile — the same convention as a death spot) or `null` (keep the death spot). Called by
+`game.js` wherever it creates `progress.wisp` (hardcore has no wisp). It relocates only when the death room is
+the arena of a boss that is **not yet beaten** (whether the fight was running or not; `bossId` is used when it
+matches the room, else the boss is looked up from the room); everything else — non-arena rooms, won arenas, dev
+rooms — returns `null`. The table is `G.wispSpotFor.SPOTS` (`{arena, room, tx, ty, alt?}`; `ty` = the empty tile
+above the floor). Rule: inside the arena only where its entry strip lets the wisp sit **>= 10 tiles outside
+the trigger rect** (so its lunges, the 3-hit knockback and a chasing player never cross the trigger), on the
+entry side and in front of any arena gate; otherwise in the room before, near the door to the arena, on safe
+floor away from hazards and enemies, on the way from that room's sconce.
+
+| boss | wisp spot | why |
+|---|---|---|
+| effigy (gw_05) | gw_04 (8,14) | The entry strip east of the trigger is only 12 tiles. gw_04 (Kindled Bolt shrine) has no enemies; the spot is by the door, west of the S1 drop, so the wisp is met after crossing it on the way from `gw_sconce_a`. |
+| sable1 (mb_07) | mb_07 (53,14) | 22-tile strip east of the trigger: inside the Lawn, 12.5 tiles clear of it, 10 tiles in from the door (`mb_sconce_b` is just outside). The Thornwalk itself has thorns, hedges and hoppers. |
+| matron (sf_05) | sf_02 (25,77) | The only non-trigger ground in the den is the 5-tile west ledge above it (a knock-back off it lands in the trigger). Great Flue floor between `sf_sconce_b` and the E4 door; nearest enemy 15 tiles up the shaft. |
+| tallowmere (dn_07) | dn_07 (6,23) | 14-tile strip west of the trigger: inside the Belfry past the (open) arena gate, 10.5 tiles clear of the trigger, on the clean floor (the flood and drips exist only in the fight). |
+| kilnmother (ch_09) | ch_08 (58,14) | Only 7 tiles before the trigger. The upper ledge by the furnace door (E1): 9 tiles above the ladle brute's floor, reached by the steps the player climbs anyway. |
+| vespertine (mw_04) | mw_06 (58,23); (44,23) while the moth knight `mw_u1` lives | Only 7 tiles before the trigger. By the bower door once the persistent knight is slain; while it lives, just east of `mw_sconce_b` and outside its engage range (|x − home| < 9 tiles), so the reclaim never pulls it in. |
+| sable2 (ri_07) | ri_07 (53,14) | Same layout as mb_07: inside, 12.5 tiles clear of the trigger; `ri_sconce_b` is right outside the door. |
+| lucerne (hs_03) | hs_02 (33,14) | Only 9 tiles before the trigger. The Vestibule's open hall (no enemies), before the low passage to the Heartwick, on the way from `hs_sconce_a`. |
+
+Verified headless by `node test-output/wisp-placement/test.js` (real fight start by walking into the trigger,
+real death in phase 1 and phase 2, real respawn, walk from the sconce, 3 real Brand hits, arena never leaves
+`wait`; plus deaths outside arenas / in won arenas keep their spot).
+
 ## Flags written (all in `progress.flags`)
 `sconce:<id>`, `item:<pickupId>`, `geode:<id>`, `lever:<id>`, `gate:<id>`, `door:<id>`,
 `talked:<key>:<talkId>`, NPC `setFlag`s, `sable_glimpse`, `wren_seen_<stage>`, `hint:wisp`, `event:<id|script>`. Lanterns use

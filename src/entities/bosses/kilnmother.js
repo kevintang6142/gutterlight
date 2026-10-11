@@ -21,6 +21,10 @@
   const sfx = (name, x, o) => { if (G.sfxAt) G.sfxAt(name, x, o); };
   const glow = (ctx, x, y, r, c, a) => { if (G.fx && G.fx.glowAt) G.fx.glowAt(ctx, x, y, r, c, a); };
   const burst = (k, x, y, o) => { if (G.fx) G.fx.burst(k, x, y, o); };
+  // Difficulty modes: EXPLICIT telegraphs (floor strips, brackets, landing rings, the breath band) are drawn in full
+  // only while this is true (easy). Gameplay timing never depends on it. See docs/api/boss-kilnmother.md
+  // "Telegraphs by mode" for the per-attack decisions (removed / kept-subtle) and the diegetic tells.
+  const teleOn = () => (G.telegraphsOn ? G.telegraphsOn() : (!(G.game && G.game.telegraphs) || G.game.telegraphs() !== false));
 
   // ---------------------------------------------------------------------------------------------------------
   // Numbers
@@ -784,6 +788,7 @@
 
   /** Slag gob: arcs onto a marked spot (props landX, landY) and splashes there (radius SPLASH). */
   const SPLASH = 30;
+  const LOB_RING_STD = 0.55;   // standard / hardcore: the dim landing ring shows only over the last 0.55 s of a gob's fall
   class KilnSlag extends G.Projectile {
     constructor(props) {
       super(props);
@@ -818,7 +823,9 @@
     }
     draw(ctx, t) {
       // the landing mark: a glowing ring on the target surface, tightening as the gob comes down
-      if (this.landX != null) {
+      // (standard / hardcore: KEPT-SUBTLE — a thin dim ring over the last LOB_RING_STD s of the fall only, see the docs)
+      if (this.landX != null && !teleOn()) this.drawSubtleRing(ctx);
+      else if (this.landX != null) {
         const k = clamp(this.ringT / Math.max(0.3, this.flight), 0, 1);
         const pulse = 0.5 + 0.5 * Math.sin(this.ringT * (10 + 14 * k));
         const R = SPLASH * (1.35 - 0.35 * k);
@@ -845,6 +852,17 @@
       ctx.beginPath(); ctx.ellipse(this.r * 0.15, -this.r * 0.2, this.r * 0.55, this.r * 0.4, 0, 0, TAU); ctx.fill();
       ctx.restore();
       void t;
+    }
+    /** Standard / hardcore landing mark: no fill, no glow, a thin faint ring fading in over the end of the flight. */
+    drawSubtleRing(ctx) {
+      const left = this.flight - this.ringT;
+      if (left > LOB_RING_STD || left < -0.05) return;
+      const k = clamp(1 - left / LOB_RING_STD, 0, 1);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = U.rgba(COL.molten, 0.25 + 0.3 * k); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(this.landX, this.landY - 2, SPLASH * 0.95, SPLASH * 0.24, 0, 0, TAU); ctx.stroke();
+      ctx.restore();
     }
   }
   G.registerProjectile('kiln_slag', KilnSlag, { r: 12, gravity: 1250, life: 4, color: COL.molten, damage: 1 });
@@ -897,6 +915,7 @@
         const k = this.age / this.warn;
         const pulse = 0.5 + 0.5 * Math.sin(this.age * (9 + 20 * k));
         const pop = clamp(1 - this.age / 0.2, 0, 1);
+        if (!teleOn()) { this.drawWarnSubtle(ctx, k, pulse); return; }
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         const gh = 84 + 20 * pop;
@@ -948,6 +967,30 @@
           ctx.quadraticCurveTo(x1 - (x1 - x0) * 0.15, fy - hh * 0.6, x1, fy);
         }
         ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+    /** Standard / hardcore warning (KEPT-SUBTLE): no tall gradient, no pop flash, no end brackets — only the floor
+     *  plates themselves heating (a thin dull-red line that warms toward orange, glowing plate seams, rising heat
+     *  motes). The section is still readable (it has no other source), but no longer outlined like a hitbox. */
+    drawWarnSubtle(ctx, k, pulse) {
+      const x = this.x, w = this.w, fy = this.floorY;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const gh = 44;
+      const g = ctx.createLinearGradient(0, fy, 0, fy - gh);
+      g.addColorStop(0, U.rgba(COL.molten, (0.35 + 0.3 * k) * (0.75 + 0.25 * pulse)));
+      g.addColorStop(0.5, U.rgba(COL.molten, (0.08 + 0.1 * k) * (0.75 + 0.25 * pulse)));
+      g.addColorStop(1, U.rgba(COL.molten, 0));
+      ctx.fillStyle = g; ctx.fillRect(x + 6, fy - gh, w - 12, gh);
+      ctx.fillStyle = U.rgba(k > 0.7 ? COL.moltenHot : COL.molten, Math.min(1, (0.55 + 0.4 * k) * (0.8 + 0.2 * pulse)));
+      ctx.fillRect(x + 6, fy - 5, w - 12, 5);
+      ctx.fillStyle = U.rgba(COL.moltenHot, 0.35 + 0.55 * k);
+      for (let i = 1; i < 4; i++) ctx.fillRect(x + (w * i) / 4 - 1, fy - 6, 2, 6);
+      for (let i = 0; i < 6; i++) {
+        const q = ((this.age * (0.8 + k) + i * 0.17 + this.seed) % 1);
+        ctx.fillStyle = U.rgba(COL.moltenHot, (0.3 + 0.45 * k) * (1 - q));
+        ctx.fillRect(x + 14 + ((i * 37 + this.seed * 7) % (w - 28)), fy - 8 - q * 44, 2, 5);
       }
       ctx.restore();
     }
@@ -1066,7 +1109,7 @@
       const x = this.cx, fy = this.y + this.h, f = this.facing;
       if (this.is('drop')) {
         // a falling molten gob, stretched by the fall
-        if (this.landX != null) {
+        if (this.landX != null && teleOn()) {   // landing ring: easy only (a moldling is harmless while it lands and forms)
           const k = clamp(this.stateTime / (this.flight || 1), 0, 1), R = 26 * (1.3 - 0.3 * k);
           ctx.save(); ctx.globalCompositeOperation = 'lighter';
           ctx.strokeStyle = U.rgba(COL.molten, 0.5 + 0.35 * Math.sin(this.stateTime * 18)); ctx.lineWidth = 3;
@@ -1526,6 +1569,12 @@
         const t0 = sd.w + i * SWEEP_GAP;
         if (i > 0 && this.at(t0 - SWEEP_TELE2)) { this.telegraph(SWEEP_TELE2, { sound: 'kiln_scrape', vol: 0.8, shake: 2 }); this.want('sweepBack', 10); }
         if (this.at(t0)) { this.want('sweepThru', 16); sfx('kiln_sweep', this.cx, { vol: 1 }); }
+        // standard / hardcore: the drawn-back ladle sheds sparks + molten drips through each wind-up (cosmetic only)
+        if (s < t0 && s >= t0 - (i ? SWEEP_TELE2 : sd.w) && !teleOn() && this.every(0.05)) {
+          const b = this.bowl();
+          burst('spark', b.x, b.y + 6, { count: 2, color: COL.moltenHot, speed: 220, angle: -Math.PI / 2 + this.facing * 0.5, spread: 1.4 });
+          burst('wax', b.x, b.y + 8, { count: 1, color: COL.molten, speed: 90, angle: Math.PI / 2, spread: 0.6 });
+        }
         if (s >= t0 + 0.03 && s < t0 + 0.27) {
           // the hitbox reaches as far as the ladle bowl (+ its spray), so it never lands before the ladle does
           const f = this.front, reach = clamp((this.bowl().x - f) * this.facing + 44, 40, SWEEP_REACH);
@@ -1667,12 +1716,16 @@
       this.lights();
       drawFigure(ctx, this.cx + shake, this.feetY, this.facing, pz, { t, cool: this.cool, grate: this.grate });
       // the breath: a shimmering heat band marks the jet's line through the wind-up, then the jet
-      if (this.state === 'breath' && this.stateData.w && this.stateTime < this.stateData.w) this.drawBreathWarn(ctx, t, this.stateTime / this.stateData.w);
+      const tele = teleOn();
+      if (this.state === 'breath' && this.stateData.w && this.stateTime < this.stateData.w) {
+        if (tele) this.drawBreathWarn(ctx, t, this.stateTime / this.stateData.w);
+        else this.drawBreathTell(ctx, t, this.stateTime / this.stateData.w);
+      }
       // the sweep: the floor strip the ladle will skim glints through each wind-up (its tell is otherwise behind her body)
       if (this.state === 'sweep' && this.stateData.w) {
         const sd = this.stateData, s = this.stateTime, t1 = sd.w + SWEEP_GAP;
         const k = s < sd.w ? s / sd.w : sd.n > 1 && s >= t1 - SWEEP_TELE2 && s < t1 ? (s - t1 + SWEEP_TELE2) / SWEEP_TELE2 : -1;
-        if (k >= 0) this.drawSweepWarn(ctx, t, k);
+        if (k >= 0) { if (tele) this.drawSweepWarn(ctx, t, k); else this.drawSweepTell(ctx, t, k); }
       }
       if (this.breathOn > 0.01) this.drawBreath(ctx, t);
       // vents glowing while she calls the brood
@@ -1699,6 +1752,30 @@
       ctx.fillRect(xe, fy - 30, 4, 30);
       ctx.restore();
       if (G.lighting) G.lighting.add({ x: x0 + reach / 2, y: fy - 20, r: reach * 0.6 + 40, color: COL.molten, intensity: 0.25 + 0.35 * k });
+    }
+    /** Standard / hardcore sweep tell (diegetic, replaces the floor strip): the drawn-back ladle's bowl glows white-hot
+     *  and sheds sparks and molten drips that patter onto the floor beside her (no strip, no reach bracket). */
+    drawSweepTell(ctx, t, k) {
+      const b = this.bowl();
+      const pulse = 0.5 + 0.5 * Math.sin(t * (14 + 16 * k));
+      glow(ctx, b.x, b.y, 34 + 26 * k, COL.moltenHot, (0.35 + 0.45 * k) * (0.75 + 0.25 * pulse));
+      if (G.lighting) G.lighting.add({ x: b.x, y: b.y, r: 90 + 60 * k, color: COL.molten, intensity: 0.3 + 0.35 * k });
+    }
+    /** Standard / hardcore breath tell (diegetic, replaces the heat band): the open core swells white-hot and embers
+     *  are sucked in toward it (the roaring intake), so the jet's source and height read from her chest. */
+    drawBreathTell(ctx, t, k) {
+      const c = this.coreRect(), cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+      const pulse = 0.5 + 0.5 * Math.sin(t * (12 + 18 * k));
+      glow(ctx, cx, cy, 70 + 60 * k, COL.moltenHot, (0.35 + 0.5 * k) * (0.7 + 0.3 * pulse));
+      glow(ctx, cx, cy, 30 + 20 * k, COL.white, 0.25 + 0.6 * k);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 10; i++) {
+        const q = (t * (1.4 + k) + i * 0.1) % 1, a = (i * 2.399) % TAU, R = 30 + 110 * (1 - q);
+        ctx.fillStyle = U.rgba(COL.moltenHot, (0.25 + 0.55 * k) * q);
+        ctx.fillRect(cx + Math.cos(a) * R * 1.3 - 1.5, cy + Math.sin(a) * R * 0.7 - 1.5, 3, 3);
+      }
+      ctx.restore();
     }
     drawBreathWarn(ctx, t, k) {
       const r = this.breathRect(1);

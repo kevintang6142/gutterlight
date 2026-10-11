@@ -1,7 +1,8 @@
 // src/ui/title.js — the title screen: "press any key" gate (unlocks audio), animated GUTTERLIGHT logo (the I is
 // a candle carrying a live blue flame), drifting ash over a dusk shore with a fallen colossal candle, the main
-// menu (Continue / New Game / Options / Controls) and the save-slot chooser (region, play time, completion,
-// completed marker, erase with confirmation).
+// menu (Continue / New Game / Options / Controls), the save-slot chooser (region, play time, completion,
+// completed marker, difficulty label, snuffed hardcore runs, erase with confirmation) and the New Game difficulty
+// chooser (Easy / Standard / Hardcore; default Standard; Hardcore asks for a confirmation).
 (function () {
   'use strict';
   const G = globalThis.G;
@@ -10,6 +11,15 @@
   const W = UI.W, H = UI.H;
   const TAU = Math.PI * 2;
   const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
+  // New Game difficulties (G.game.difficulty()): label, one-line description, flame colour of the icon.
+  const MODES = [
+    { id: 'easy', label: ['ui.modeEasy', 'Easy'], desc: ['ui.modeEasyDesc', 'Attacks are clearly marked — every strike shows where it will land.'], flame: 'gold' },
+    { id: 'standard', label: ['ui.modeStandard', 'Standard'], desc: ['ui.modeStandardDesc', 'The intended journey. Read your foes.'], flame: 'blue' },
+    { id: 'hardcore', label: ['ui.modeHardcore', 'Hardcore'], desc: ['ui.modeHardcoreDesc', 'As Standard, but death is final — the journey is lost.'], flame: 'red' },
+  ];
+  const DEFAULT_MODE = 1; // Standard
+  const modeLabel = (id) => { const m = MODES.find((x) => x.id === id) || MODES[0]; return UI.text(m.label[0], m.label[1]); };
+  UI.modeLabel = modeLabel;
 
   // ------------------------------------------------------------------ cached art
   let backdrop = null;
@@ -197,8 +207,9 @@
   function makeTitle() {
     const s = {
       name: 'title', blocking: true, fadeIn: 0.8, fadeOut: 0.7,
-      view: 'gate',          // gate | menu | slots
-      gateK: 1, menuK: 0, slotsK: 0,
+      view: 'gate',          // gate | menu | slots | modes
+      gateK: 1, menuK: 0, slotsK: 0, modesK: 0,
+      modeSel: DEFAULT_MODE, newSlot: -1, newOverwrite: false,
       sel: 0, items: [],
       slotMode: 'continue', slots: [], slotSel: 0, eraseFocus: false,
       leaving: false, startT: 0,
@@ -232,9 +243,11 @@
         this.gateK = approach(this.gateK, this.view === 'gate' ? 1 : 0, k);
         this.menuK = approach(this.menuK, this.view === 'menu' ? 1 : 0, k);
         this.slotsK = approach(this.slotsK, this.view === 'slots' ? 1 : 0, k);
+        this.modesK = approach(this.modesK, this.view === 'modes' ? 1 : 0, k);
         if (!active || this.leaving) return;
         if (this.view === 'gate') this.updateGate();
         else if (this.view === 'menu') this.updateMenu();
+        else if (this.view === 'modes') this.updateModes();
         else this.updateSlots();
       },
       updateGate() {
@@ -273,8 +286,9 @@
         this.slotMode = mode;
         this.slots = readSlots();
         this.eraseFocus = false;
-        // preselect: continue → the first existing slot; new → the first empty slot
-        let pick = this.slots.findIndex((x) => (mode === 'continue' ? x.raw : !x.raw));
+        // preselect: continue → the first resumable slot (else the first save); new → the first empty slot
+        let pick = mode === 'continue' ? this.slots.findIndex((x) => x.exists && !x.sum.broken) : -1;
+        if (pick < 0) pick = this.slots.findIndex((x) => (mode === 'continue' ? x.raw : !x.raw));
         if (pick < 0) pick = 0;
         this.slotSel = pick;
         this.view = 'slots';
@@ -282,7 +296,7 @@
       slotUsable(i) {
         if (i >= this.slots.length) return true; // Back
         const sl = this.slots[i];
-        return this.slotMode === 'new' ? true : sl.exists;
+        return this.slotMode === 'new' ? true : sl.exists && !sl.sum.broken; // a snuffed hardcore run cannot continue
       },
       updateSlots() {
         const n = this.slots.length + 1; // + Back
@@ -326,22 +340,54 @@
           return;
         }
         if (this.slotMode === 'continue') {
-          if (!sl.exists) { UI.sfx('deny'); return; }
+          if (!sl.exists || sl.sum.broken) { UI.sfx('deny'); return; }
           this.start('continue', sl.slot);
           return;
         }
         if (sl.raw) {
           UI.sfx('menu_select');
+          // the old save is only erased once the new journey actually begins (backing out of the mode chooser keeps it)
           UI.confirm({
             name: 'confirm_overwrite', text: UI.text('ui.eraseConfirm', 'Erase this journey forever?'),
             yes: UI.text('ui.newGame', 'New Game'), no: UI.text('ui.cancel', 'Cancel'),
-            onYes: () => { UI.safe(() => G.Save.remove(sl.slot), 'Save.remove'); this.start('new', sl.slot); },
+            onYes: () => this.openModes(sl.slot, true),
           });
           return;
         }
-        this.start('new', sl.slot);
+        UI.sfx('menu_select');
+        this.openModes(sl.slot, false);
       },
-      start(kind, slot) {
+      openModes(slot, overwrite) {
+        this.newSlot = slot;
+        this.newOverwrite = !!overwrite;
+        this.modeSel = DEFAULT_MODE;
+        this.view = 'modes';
+      },
+      updateModes() {
+        const dy = UI.navY();
+        if (dy) { this.modeSel = (this.modeSel + dy + MODES.length) % MODES.length; UI.sfx('menu_move'); }
+        if (UI.pressedAny(UI.BACK)) { UI.sfx('menu_back'); this.view = 'slots'; this.slots = readSlots(); return; }
+        if (!UI.pressedAny(UI.CONFIRM)) return;
+        const m = MODES[this.modeSel];
+        if (m.id === 'hardcore') {
+          UI.sfx('menu_select');
+          UI.confirm({
+            name: 'confirm_hardcore',
+            text: UI.text('ui.hardcoreConfirm', 'Death is final. If your flame goes out, this journey is lost forever.'),
+            yes: UI.text('ui.hardcoreBegin', 'Begin'), no: UI.text('ui.cancel', 'Cancel'),
+            onYes: () => this.beginNew(m.id),
+          });
+          return;
+        }
+        this.beginNew(m.id);
+      },
+      beginNew(mode) {
+        const slot = this.newSlot;
+        if (slot < 0) return;
+        if (this.newOverwrite) UI.safe(() => G.Save.remove(slot), 'Save.remove');
+        this.start('new', slot, mode);
+      },
+      start(kind, slot, mode) {
         this.leaving = true;
         UI.sfx('menu_select');
         UI.close(this, () => {
@@ -349,7 +395,7 @@
           if (kind === 'continue') {
             G.game.continueGame(slot);
             if (G.game.mode === 'play' && typeof G.game.fade === 'function') { G.game.fadeAlpha = 1; G.game.fade(0, 1.0); }
-          } else G.game.newGame(slot);
+          } else G.game.newGame(slot, mode);
         });
       },
 
@@ -357,7 +403,7 @@
         const t = UI.t;
         UI.drawTitleBackdrop(ctx, 1);
         const cover = 1 - (this.cover || 0);
-        const logoA = Math.max(this.gateK, this.menuK) * (1 - this.slotsK) * cover;
+        const logoA = Math.max(this.gateK, this.menuK) * (1 - Math.max(this.slotsK, this.modesK)) * cover;
         const ly = 250 - 20 * this.menuK;
         if (logoA > 0.01) {
           drawLogo(ctx, W / 2, ly, t, logoA);
@@ -386,6 +432,7 @@
           ctx.globalAlpha = a;
         }
         if (this.slotsK > 0.01) this.drawSlots(ctx, a * this.slotsK, t);
+        if (this.modesK > 0.01) this.drawModes(ctx, a * this.modesK, t);
         // version
         ctx.globalAlpha = a * 0.35;
         ctx.font = UI.font(14);
@@ -426,6 +473,47 @@
         UI.drawMenu(ctx, [{ label: UI.text('ui.back', 'Back') }], this.slotSel === this.slots.length ? 0 : -1, W / 2, by, { size: 24, t });
         UI.hints(ctx, [['confirm', UI.text('ui.confirm', 'Confirm')], ['right', UI.text('ui.erase', 'Erase')], ['cancel', UI.text('ui.back', 'Back')]], W / 2, 690, 'center', { alpha: 0.55, size: 16 });
       },
+
+      drawModes(ctx, a, t) {
+        ctx.globalAlpha = a;
+        ctx.font = UI.font(40);
+        ctx.fillStyle = C.cream;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        UI.spacedText(ctx, UI.text('ui.chooseMode', 'Choose a Trial'), W / 2, 92, 2, 'center');
+        UI.flourish(ctx, W / 2, 132, 200, { alpha: 0.6 });
+        const px = 290, pw = 700, ph = 118;
+        for (let i = 0; i < MODES.length; i++) {
+          const m = MODES[i];
+          const py = 176 + i * 140;
+          const on = this.modeSel === i;
+          const hard = m.id === 'hardcore';
+          ctx.globalAlpha = a * (on ? 1 : 0.72);
+          UI.panel(ctx, px, py, pw, ph, {
+            border: on ? (hard ? 'rgba(240,140,120,0.6)' : 'rgba(170,215,255,0.6)') : 'rgba(236,228,207,0.2)',
+            cornerAlpha: on ? 0.8 : 0.4, cornerColor: hard ? C.red : undefined,
+          });
+          const fx = px + 66, fy = py + ph / 2 + 22;
+          if (on) UI.glow(ctx, fx, fy - 20, 100, hard ? '#d8402c' : m.flame === 'gold' ? '#d8a040' : '#3f8cff', 0.14);
+          // icon: a candle carrying the mode's flame (hardcore: a single thin, red flame)
+          ctx.fillStyle = '#e8e0ca';
+          ctx.fillRect(fx - 6, fy - 2, 12, 26);
+          UI.flame(ctx, fx, fy - 3, on ? 30 : 24, m.flame, t, i * 3 + 1, { glow: on ? 0.9 : 0.4 });
+          const tx = px + 130;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.font = UI.font(30);
+          ctx.fillStyle = on ? (hard ? '#f4b4a4' : C.creamHi) : C.cream;
+          const lab = UI.text(m.label[0], m.label[1]);
+          ctx.fillText(lab, tx, py + 40);
+          if (on) { const lw = ctx.measureText(lab).width; UI.pips(ctx, tx + lw / 2, py + 40, lw / 2, t); }
+          ctx.font = UI.font(19, 'italic');
+          ctx.fillStyle = on ? C.creamDim : C.dim;
+          ctx.fillText(UI.text(m.desc[0], m.desc[1]), tx, py + 80);
+        }
+        ctx.globalAlpha = a;
+        UI.hints(ctx, [['confirm', UI.text('ui.confirm', 'Confirm')], ['cancel', UI.text('ui.back', 'Back')]], W / 2, 664, 'center', { alpha: 0.55, size: 16 });
+      },
     };
     return s;
   }
@@ -434,12 +522,13 @@
 
   function drawSlotPanel(ctx, sl, x, y, w, h, on, usable, mode, t, a) {
     const sum = sl.sum || {};
-    ctx.globalAlpha = a * (usable || sl.raw ? 1 : 0.55);
+    const broken = !!(sl.exists && sum.broken);
+    ctx.globalAlpha = a * (usable ? 1 : broken ? 0.8 : sl.raw ? 1 : 0.55);
     UI.panel(ctx, x, y, w, h, {
-      border: on ? 'rgba(170,215,255,0.6)' : 'rgba(236,228,207,0.2)', cornerAlpha: on ? 0.8 : 0.4,
-      cornerColor: sum.completed ? C.gold : undefined,
+      border: on ? (broken ? 'rgba(224,138,120,0.5)' : 'rgba(170,215,255,0.6)') : 'rgba(236,228,207,0.2)', cornerAlpha: on ? 0.8 : 0.4,
+      cornerColor: broken ? C.faint : sum.completed ? C.gold : undefined,
     });
-    if (on) UI.glow(ctx, x + 70, y + h / 2, 110, '#3f8cff', 0.12);
+    if (on && !broken) UI.glow(ctx, x + 70, y + h / 2, 110, '#3f8cff', 0.12);
     // numeral medallion
     const mx = x + 70, my = y + h / 2;
     ctx.strokeStyle = on ? 'rgba(170,215,255,0.7)' : 'rgba(236,228,207,0.3)';
@@ -447,10 +536,16 @@
     ctx.beginPath(); ctx.arc(mx, my, 34, 0, TAU); ctx.stroke();
     ctx.beginPath(); ctx.arc(mx, my, 29, 0, TAU); ctx.stroke();
     ctx.font = UI.font(30);
-    ctx.fillStyle = sum.completed ? C.gold : on ? C.creamHi : C.creamDim;
+    ctx.fillStyle = broken ? C.dim : sum.completed ? C.gold : on ? C.creamHi : C.creamDim;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(ROMAN[sl.slot] || String(sl.slot + 1), mx, my + 1);
+    if (broken) { // a crack through the medallion
+      ctx.strokeStyle = 'rgba(5,6,10,0.9)'; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(mx - 9, my - 35); ctx.lineTo(mx - 2, my - 14); ctx.lineTo(mx - 8, my - 2); ctx.lineTo(mx + 4, my + 12); ctx.lineTo(mx + 1, my + 35); ctx.stroke();
+      ctx.strokeStyle = 'rgba(224,138,120,0.35)'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(mx - 2, my - 14); ctx.lineTo(mx + 9, my - 20); ctx.stroke();
+    }
     const tx = x + 132;
     ctx.textAlign = 'left';
     if (sl.unreadable) {
@@ -466,8 +561,17 @@
       return;
     }
     ctx.font = UI.font(30);
-    ctx.fillStyle = on ? C.creamHi : C.cream;
-    ctx.fillText(sum.regionName || UI.text('ui.unknown', '???'), tx, y + 44);
+    ctx.fillStyle = broken ? C.creamDim : on ? C.creamHi : C.cream;
+    const regionText = sum.regionName || UI.text('ui.unknown', '???');
+    ctx.fillText(regionText, tx, y + 44);
+    // the run's difficulty, small, after the region name
+    const rw = ctx.measureText(regionText).width;
+    const runMode = sum.mode || 'easy';
+    ctx.font = UI.font(17, 'italic');
+    ctx.fillStyle = runMode === 'hardcore' ? C.red : runMode === 'standard' ? '#a9c6dc' : C.goldDim;
+    ctx.globalAlpha = a * (broken ? 0.6 : 0.85);
+    ctx.fillText(modeLabel(runMode), tx + rw + 18, y + 46);
+    ctx.globalAlpha = a * (usable ? 1 : broken ? 0.8 : sl.raw ? 1 : 0.55);
     ctx.font = UI.font(19);
     ctx.fillStyle = C.creamDim;
     const info = UI.text('ui.playTime', 'Play Time') + '  ' + (sum.playTimeText || '0:00') + '      ' +
@@ -475,7 +579,31 @@
     ctx.fillText(info, tx, y + 86);
     // right column: completed marker or candles, and cinders
     const rx = x + w - 34;
-    if (sum.completed) {
+    if (broken) {
+      // a snuffed candle: a short wax stub, a bent black wick and a curl of smoke (no flame)
+      ctx.font = UI.font(18, 'italic');
+      ctx.fillStyle = C.red;
+      ctx.textAlign = 'right';
+      const lab = UI.text('ui.slotSnuffed', 'Snuffed');
+      ctx.fillText(lab, rx, y + 40);
+      const lw = ctx.measureText(lab).width;
+      const cx = rx - lw - 18, by = y + 52;
+      ctx.fillStyle = '#9a9384';
+      ctx.fillRect(cx - 4, by - 10, 8, 10);
+      ctx.beginPath(); ctx.ellipse(cx, by - 10, 4, 1.6, 0, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#141210'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(cx, by - 11); ctx.quadraticCurveTo(cx + 1, by - 15, cx + 3, by - 16); ctx.stroke();
+      const pa = ctx.globalAlpha;
+      ctx.strokeStyle = 'rgba(190,186,176,0.4)'; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (let k = 0; k <= 12; k++) {
+        const sy = by - 17 - k * 2.2, sx = cx + 3 + Math.sin(k * 0.7 + t * 1.6) * (1 + k * 0.25);
+        if (k === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+      }
+      ctx.globalAlpha = pa * 0.8;
+      ctx.stroke();
+      ctx.globalAlpha = pa;
+    } else if (sum.completed) {
       ctx.font = UI.font(18, 'italic');
       ctx.fillStyle = C.gold;
       ctx.textAlign = 'right';

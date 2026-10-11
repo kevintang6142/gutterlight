@@ -3,6 +3,8 @@
 // room is highlighted and a blue-flame marker shows the player's real position. Icons mark sconces, Lanternway
 // posts, merchants/travelers, the Seal Door and the Gutterwisp in visited rooms; with the Waymoth sigil, moths mark
 // uncollected pickups in visited/charted rooms. Region labels, pan (arrows/stick), zoom, centered on open.
+// No spoilers: markers only for visited rooms (Waymoth moths are the item's explicit effect), the legend only
+// lists icon kinds present on the map.
 (function () {
   'use strict';
   const G = globalThis.G;
@@ -460,13 +462,23 @@
     UI.vignette(ctx, 0.5);
   }
 
+  // The legend lists only icon kinds that are actually on this map (no spoilers: e.g. no 'Seal Door' entry before
+  // the door's room is visited, no 'Merchant' before a merchant has been seen), in a fixed order.
+  const LEGEND_ORDER = ['you', 'sconce', 'lanternway', 'shop', 'npc', 'relic', 'door', 'wisp'];
+  const LEGEND_FB = { you: 'You', sconce: 'Sconce', lanternway: 'Lanternway', shop: 'Merchant', npc: 'Traveler', relic: 'Unclaimed Relic', door: 'Seal Door', wisp: 'Gutterwisp' };
+  function legendItems(s) {
+    const seen = new Set();
+    if (s.you) seen.add('you');
+    if (s.wisp) seen.add('wisp');
+    for (const r of s.rooms) for (const m of r.markers) seen.add(m.kind);
+    return LEGEND_ORDER.filter((k) => seen.has(k));
+  }
+  UI.mapLegendKinds = (s) => legendItems(s || UI.find('map') || { rooms: [] });
+
   /** Legend row at y (left-aligned from x=40); with measure, draws nothing. Returns the row width. */
   function drawLegend(ctx, s, t, y, measure) {
     const L = (k, fb) => UI.text('ui.mapLegend.' + k, fb);
-    const items = [['you', L('you', 'You')], ['sconce', L('sconce', 'Sconce')], ['lanternway', L('lanternway', 'Lanternway')], ['shop', L('shop', 'Merchant')], ['npc', L('npc', 'Traveler')]];
-    if (s.waymoth) items.push(['relic', L('relic', 'Unclaimed Relic')]);
-    if (s.rooms.some((r) => r.markers.some((m) => m.kind === 'door'))) items.push(['door', L('door', 'Seal Door')]);
-    if (s.wisp) items.push(['wisp', L('wisp', 'Gutterwisp')]);
+    const items = legendItems(s).map((k) => [k, L(k, LEGEND_FB[k])]);
     let x = 40;
     ctx.font = UI.font(15);
     if (measure) {

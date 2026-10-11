@@ -68,3 +68,15 @@ node test-output/boss-tallowmere/test.js            # sheet hit dodge defeat cha
 ```
 Contact sheets: `test-output/boss-tallowmere/sheet_poses.png`, `sheet_attacks_1.png`, `sheet_attacks_2.png`,
 `sheet_story.png` (walk-in, rise, hit flash, stagger, defeat stages, remains), `flow_after.png`.
+
+## Telegraphs by mode (difficulty modes; framework: docs/api/enemies.md §6.1)
+
+Easy draws everything exactly as before. Standard / hardcore hide the explicit markers (draw-time `G.telegraphsOn()`;
+timing identical in all modes) except the documented **kept-subtle** case.
+
+| attack | easy | standard / hardcore | diegetic tell (all modes unless noted) |
+|---|---|---|---|
+| `vigil` | lit molten column (from the top of the view), floor ring, floor glows, dark floor shadow | column, ring, glows removed; the dark floor shadow **kept-subtle** (no glow) — *reason: most columns start on a vault above the camera view (no visible source) and the phase-2 waves overlap 0.48 s apart while hunting the player* | chant 0.62 s, arms to the vault; each drop swells on the vault / bell lip with a glint + light; **standard (new)**: framework `drip` cue — molten droplets dribble down over each column and a drop swells at the top edge of the view when the vault is off-screen |
+| `slam` | landing shadow + warm ring at the exact landing spot | removed | crouch, belly sags, groan 0.64 / 0.55 s; the visible hop (apex 210–360 px) |
+| `summon`, `awaken` (acolytes rise) | floor zones + a cold glow over the spots | removed (zones `cue: 'none'`, glow off) | arms spread + chant + `tallow_rise`; the flood boils there (bubbles + ripples) |
+| `toll`, `sweep`, `hush` | — (no explicit marker) | unchanged | crozier raised / drawn back / hands cupped + glint + sfx; rings and motes visible |

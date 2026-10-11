@@ -94,3 +94,25 @@ back (0.45 s; 0.4 s for the second lash) and lashes a thorned whip 2.7 tiles in 
 - `node tools/enemy_selftest.js --kinds bloom_spitter,thorn_hopper,pollen_moth,vine_lurker --region meltbloom --out test-output/enemies-meltbloom`
 - Scripted fights / edge cases: `test-output/enemies-meltbloom/fight.js`, `trace.js` (use with `tools/shot.js --evalFile`);
   in-game action sheet `test-output/enemies-meltbloom/sheet.js` → `enemies.png`; set pieces `events.js` → `events.png`.
+
+## Telegraphs by mode (easy / standard / hardcore)
+
+The difficulty modes (`G.game.difficulty()`; `G.telegraphsOn()` is true only in Easy) change only **explicit** telegraphs: drawn geometry that outlines where or
+when damage lands (floor zones, landing marks, aim/trajectory lines, hitbox previews, danger tints). Those draw only
+while `G.game.telegraphs()` (alias `G.telegraphsOn()` in enemy_base) is true, which means easy mode only. The
+telegraph audit (module tele-enemies) found **no explicit marker on any of these enemies**. Every tell below is
+**diegetic**: the attacker's own wind-up pose, a glow or glint on its body or weapon (`telegraph()` anchors it on the
+body, weapon tip, lantern, bell or pot), its sound cue, the wind-up shake, particles it emits, or projectiles forming on
+it and visible in flight. So all three modes look and play the same, with the same timing. Nothing was removed and
+nothing was kept-subtle. Verified: `test-output/tele-enemies/sheet_meltbloom.png` shows easy and standard side by side
+with seeded randomness and 0.00 % pixel difference at every wind-up. The lab self-test passes in all three modes
+(`test-output/tele-enemies/run_all.sh`). **Rule for new attacks:** gate any explicit marker at draw time with
+`G.telegraphsOn()` (or keep it with `keep: true` and document why), and keep a diegetic tell of at least 0.35 s.
+
+| attack | easy | standard / hardcore | diegetic tell (lead time) |
+|---|---|---|---|
+| bloom_spitter: seed volley | no explicit marker | same as easy (nothing to remove) | **open** 0.55 s: the petals unfurl around a glowing gold throat, glint on the head, `bloom_open`, shake. The head tilts toward the aim |
+| thorn_hopper: hop / chase leap | no explicit marker | same as easy (nothing to remove) | **crouch** 0.40 s (travel hop) / 0.45 s (chase leap): squats and shakes, glow pulse on the pod, plus `enemy_windup` on the chase leap |
+| pollen_moth: dive | no explicit marker | same as easy (nothing to remove) | **charge** 0.55 s: brakes, wings raised, the gold abdomen pulses brighter, `enemy_windup`, shake; pollen trail in flight |
+| vine_lurker: emerge | no explicit marker | same as easy (nothing to remove) | **stir** 0.45 s: the leaf trembles and soil spits at its own burrow (a faint glow there, no glint), `vine_rustle`. This is a natural precursor at the attacker and does not outline the 2.6-tile lash |
+| vine_lurker: lash (1st / 2nd) | no explicit marker | same as easy (nothing to remove) | **windup** 0.45 s / 0.40 s: coils back away from the Wickling, jaw opens, glint, `enemy_windup` |

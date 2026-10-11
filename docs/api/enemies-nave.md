@@ -106,3 +106,30 @@ lantern), jellies by their glowing translucent bell and pale heart-flame, sentri
 knights by the pale steel helm with glowing eye slit and the gold flame device on the tower shield. Everything drips
 (small water drops slide off hems, lanterns, shields). Telegraph colour `#f2d890` (nave light). Deaths: the standard
 wax melt into a dark puddle (acolyte's lantern goes dark, the jelly collapses with crossed eyes).
+
+## Telegraphs by mode (easy / standard / hardcore)
+
+The difficulty modes (`G.game.difficulty()`; `G.telegraphsOn()` is true only in Easy) change only **explicit** telegraphs: drawn geometry that outlines where or
+when damage lands (floor zones, landing marks, aim/trajectory lines, hitbox previews, danger tints). Those draw only
+while `G.game.telegraphs()` (alias `G.telegraphsOn()` in enemy_base) is true, which means easy mode only. The
+telegraph audit (module tele-enemies) found **no explicit marker on any of these enemies**. Every tell below is
+**diegetic**: the attacker's own wind-up pose, a glow or glint on its body or weapon (`telegraph()` anchors it on the
+body, weapon tip, lantern, bell or pot), its sound cue, the wind-up shake, particles it emits, or projectiles forming on
+it and visible in flight. So all three modes look and play the same, with the same timing. Nothing was removed and
+nothing was kept-subtle. Verified: `test-output/tele-enemies/sheet_nave.png` shows easy and standard side by side
+with seeded randomness and 0.00 % pixel difference at every wind-up. The lab self-test passes in all three modes
+(`test-output/tele-enemies/run_all.sh`). **Rule for new attacks:** gate any explicit marker at draw time with
+`G.telegraphsOn()` (or keep it with `keep: true` and document why), and keep a diegetic tell of at least 0.35 s.
+
+| attack | easy | standard / hardcore | diegetic tell (lead time) |
+|---|---|---|---|
+| drowned_acolyte: lantern sweep | no explicit marker | same as easy (nothing to remove) | **raise** 0.50 s: lantern hoisted high behind the hood, glint and glow on the lantern |
+| drowned_acolyte: lantern-flame lob | no explicit marker | same as easy (nothing to remove) | **wind** 0.55 s: lantern swung back low, the flame swells (glow on the lantern); the flame is visible in flight |
+| rain_jelly: droplet ring | no explicit marker | same as easy (nothing to remove) | **swell** 0.62 s: inflates, glows, `jelly_swell`; the 8 droplets bead on its own rim where they will fly (see the note below) |
+| bell_sentry: toll shockwaves | no explicit marker | same as easy (nothing to remove) | **ring** 0.62 s: mallet heaved over the bell head, the bell hums gold (glow on the bell); the waves are visible as they travel |
+| drowned_knight: stab | no explicit marker | same as easy (nothing to remove) | **windup** 0.55 s: sword raised by the helm, point forward, shield swung aside, eyes flare, glint at the tip |
+| drowned_knight: follow-up stab | no explicit marker | same as easy (nothing to remove) | **pull** 0.36 s: sword pulled back again, glint at the tip |
+
+Rain jelly droplets: they are the projectiles themselves forming on the attacker's body, so they count as diegetic
+and stay in every mode. They are also the only readable cue for the half-step ring offset. Without them the gaps in
+the ring could only be found by guessing.

@@ -1,6 +1,6 @@
 // src/data/text.js — G.Text: every player-facing string in GUTTERLIGHT (story, lore, NPCs, UI).
 // Pure data (Node-loadable, no DOM). Schema: docs/TECH_SPEC.md §15; notes: docs/api/text.md.
-// Lines may contain input tokens {jump} {attack} {dash} {spell} {up} {down} {map} {inventory};
+// Lines may contain input tokens {jump} {attack} {dash} {spell} {up} {down} {interact} {map} {inventory} (they follow the current bindings);
 // a few ui/shop strings use {placeholders} filled by G.Text.fmt().
 (function () {
   'use strict';
@@ -432,7 +432,7 @@
     ] },
     lore_sh_3: { title: 'A Third Carving, Half Buried', lines: [
       "Each strike that lands draws Ember. Stand still and hold {spell} to Kindle, and your Ember will mend your wax.",
-      "Where an old sconce stands, press {up} to rest beside it. Resting is not ending. Remember that.",
+      "Where an old sconce stands, press {interact} to rest beside it. Resting is not ending. Remember that.",
       "Press {map} to see the roads you have walked, and {inventory} to see what you carry.",
       "Go down gently, little one. I am sorry I cannot go with you.",
     ] },
@@ -678,7 +678,7 @@
     bolt: {
       name: 'Ember Bolt',
       desc: 'Hurl a bolt of blue fire that passes through every foe in its path.',
-      how: 'Tap {spell} to cast. Costs 33 Ember. Strike foes with the Brand to gather Ember.',
+      how: 'Tap {spell} to hurl a bolt of blue fire, spending some of your Ember. Strike foes with the Brand to gather more.',
     },
     dash: {
       name: 'Flare Dash',
@@ -698,7 +698,7 @@
     plunge: {
       name: 'Molten Plunge',
       desc: 'Fall like a molten drop, shattering cracked floors and the foes beneath.',
-      how: 'In the air, hold {down} and press {spell}. Costs 33 Ember.',
+      how: 'In the air, hold {down} and press {spell} to plunge, spending some of your Ember.',
     },
     wings: {
       name: 'Smokewing',
@@ -716,7 +716,7 @@
     },
     urn: {
       name: 'Ember Urn',
-      desc: 'A small clay urn, warm to the touch. Your Ember Well holds 33 more Ember.',
+      desc: 'A small clay urn, warm to the touch. Your Ember Well holds more.',
     },
     kiln_glass: {
       name: 'Kiln Glass',
@@ -764,15 +764,16 @@
   };
 
   // ---------------------------------------------------------------------------------------------
-  // Sigils (DESIGN §3.5): flavor, then the exact effect. Costs live in G.Items.sigils.
+  // Sigils (DESIGN §3.5): flavor, then the effect in plain words. No numbers (no %, damage or Ember amounts), as in
+  // Hollow Knight; the exact values live in G.Items.sigils and DESIGN §3.5. Notch costs live in G.Items.sigils too.
   const sigils = {
     swift_brand: {
       name: 'Quickwick',
-      desc: 'A wick trimmed short, eager to burn. Your Brand recovers 30% faster between strikes.',
+      desc: 'A wick trimmed short, eager to burn. Your Brand strikes more swiftly.',
     },
     long_brand: {
       name: 'Longbrand',
-      desc: "Wren's old companion. It always reached a little further than she did. Your Brand reaches 35% further.",
+      desc: "Wren's old companion. It always reached a little further than she did. Your Brand reaches further.",
     },
     heartwax: {
       name: 'Stubborn Heartwax',
@@ -780,11 +781,11 @@
     },
     kindle_haste: {
       name: 'Hastened Kindling',
-      desc: 'Dry tinder, quick to catch. Kindling takes 40% less time.',
+      desc: 'Dry tinder, quick to catch. You Kindle far more quickly.',
     },
     ember_thirst: {
       name: 'Ember Thirst',
-      desc: 'A hungry little flame. Each Brand strike that lands draws 6 more Ember.',
+      desc: 'A hungry little flame. Each Brand strike that lands draws more Ember.',
     },
     cinder_lure: {
       name: 'Cinder Lure',
@@ -792,19 +793,19 @@
     },
     smolder_shell: {
       name: 'Smoldering Shell',
-      desc: 'A crust of hardened wax. After you are hurt, you stay protected 60% longer.',
+      desc: 'A crust of hardened wax. After you are hurt, you stay protected for longer.',
     },
     flare_trail: {
       name: 'Flare Trail',
-      desc: 'Your Flare Dash leaves blue fire in its wake, burning foes for 8 damage every quarter second.',
+      desc: 'Blue fire that will not stay put. Your Flare Dash leaves a trail of flame that sears any foe caught in it.',
     },
     bright_bolt: {
       name: 'White-hot Core',
-      desc: 'A flame burned past blue into white. Your spells deal 50% more damage.',
+      desc: 'A flame burned past blue into white. Your spells burn far hotter.',
     },
     thorned_wax: {
       name: 'Thorned Wax',
-      desc: 'Wax that bristles when pressed. When you are hurt, it bursts outward, dealing 12 damage to foes nearby.',
+      desc: 'Wax that bristles when pressed. When you are hurt, it bursts outward and burns the foes around you.',
     },
     steadfast: {
       name: 'Steadfast Wick',
@@ -816,11 +817,11 @@
     },
     last_light: {
       name: 'Last Light',
-      desc: 'The fiercest flame is the one nearly out. With a single candle of health left, your Brand deals 75% more damage.',
+      desc: 'The fiercest flame is the one nearly out. With a single candle of health left, your Brand strikes far harder.',
     },
     deep_kindle: {
       name: 'Deep Kindle',
-      desc: 'Slow, patient warmth. Kindling restores 2 health instead of 1, but takes 65% longer.',
+      desc: 'Slow, patient warmth. Kindling takes much longer, but mends twice as much wax.',
     },
   };
 
@@ -983,6 +984,7 @@
       bought: "There. Mind the ink, it's still wet.",
       poor: "Ink isn't free, I'm afraid. Not even mine.",
       empty: "That's all of them. Every line I ever walked, and now they're yours.",
+      unwalked: "Hm-hm... Nothing I've drawn touches anywhere you've been. Go find an edge, then come back for its chart.",
       farewell: "Hm-hmm... Come back and tell me where the lines go.",
     },
     bramm: {
@@ -1008,7 +1010,7 @@
 
   // ---------------------------------------------------------------------------------------------
   // Menus, prompts and system strings. {n} {used} {total} {price} {glass} {region} are
-  // placeholders for G.Text.fmt(); input tokens ({jump} etc.) appear only in controlTips.
+  // placeholders for G.Text.fmt(); input tokens ({jump} etc.) follow the player's current bindings (UI.tokens / UI.layoutRich).
   const ui = {
     // Title & common
     gameTitle: 'GUTTERLIGHT',
@@ -1040,6 +1042,20 @@
     eraseConfirm: 'Erase this journey forever? It cannot be rekindled.',
     playTime: 'Play Time',
     completion: 'Completion',
+    slotSnuffed: 'Snuffed', // a broken Hardcore run
+
+    // Trials (difficulty modes) — chosen at New Game, fixed for the run
+    chooseMode: 'Choose a Trial',
+    modeEasy: 'Easy',
+    modeStandard: 'Standard',
+    modeHardcore: 'Hardcore',
+    modeEasyDesc: 'Attacks are clearly marked — every strike shows where it will land.',
+    modeStandardDesc: 'The intended journey. Read your foes.',
+    modeHardcoreDesc: 'As Standard, but death is final — the journey is lost.',
+    hardcoreConfirm: 'Death is final. If your flame goes out, this journey is lost forever.',
+    hardcoreBegin: 'Begin',
+    gameOver: 'Your flame is spent.',
+    gameOverSub: 'The light does not return.',
 
     // Pause & options
     paused: 'Paused',
@@ -1072,16 +1088,16 @@
     zoom: 'Zoom',         // map screen hint
     zoomOut: 'Zoom Out',  // map screen hint
     recenter: 'Recenter', // map screen hint (back to your position)
-    damage: 'damage',     // Brand damage suffix (inventory, Bramm's shop, item card): '9 damage'
     actions: {
       move: 'Move',
       left: 'Move Left',
       right: 'Move Right',
-      up: 'Aim Up / Interact',
+      up: 'Up / Aim Up',
+      aimUp: 'Up / Aim Up', // Controls screen row (Interact has its own row)
       down: 'Aim Down',
       jump: 'Jump',
       attack: 'Attack',
-      dash: 'Flare Dash',
+      dash: 'Dash',
       spell: 'Spell / Kindle',
       interact: 'Interact',
       map: 'Map',
@@ -1090,12 +1106,38 @@
       confirm: 'Confirm',
       cancel: 'Back',
     },
+    // Rebinding (Controls screen). {action} = an action name, {input}/{other} = an input label ('X', 'LMB', 'A').
+    bindPrimary: 'Primary',
+    bindSecondary: 'Secondary',
+    bindPress: 'Press...',
+    rebind: 'Rebind',
+    clear: 'Clear',
+    resetControls: 'Reset to Defaults',
+    resetControlsConfirm: 'Return every control to its default?',
+    controlsReset: 'Every control is back to its default.',
+    // Capture prompt by column (Key = keyboard/mouse column, Pad = Gamepad column) and last device used (suffix).
+    capturePromptKey: 'Press a key or mouse button for {action}... Esc to cancel, Backspace to clear.',
+    capturePromptKeyPad: 'Press a key or mouse button for {action}... B to cancel.',
+    capturePromptPad: 'Press a gamepad button for {action}... or wait a moment to cancel.',
+    capturePromptPadKey: 'Press a gamepad button for {action}... Esc to cancel, Backspace to clear.',
+    bindMoved: '{input} moved from {action}.',
+    bindSwapped: '{input} moved from {action}, which now uses {other}.',
+    bindLast: '{action} needs at least one binding.',
+    bindLastPad: '{action} needs a gamepad button.',
+    bindOsKey: '{input} is a system key and cannot be bound.',
+    bindCtrlWarn: 'Ctrl+W, Ctrl+T and Ctrl+N cannot be blocked by the browser.',
+    bindReserved: '{input} is kept for the menus.',
+    bindRefused: 'That cannot be bound here.',
+    bindNeedPad: 'Press a gamepad button for the Gamepad column.',
+    bindNeedKey: 'Press a key or mouse button for this column.',
+    controlsFallbackKey: 'Enter, Esc and the arrow keys always work in menus, and Esc always pauses.',
+    controlsFallbackPad: 'A, B and the D-pad always work in menus.',
     controlTips: [
       'Hold {up} as you attack to strike upward.',
       'In the air, hold {down} as you attack to strike below you and spring off foes and thorns.',
       'Stand still and hold {spell} to Kindle: spend Ember to mend your wax.',
       'Hold {down} and press {jump} to drop through thin ledges.',
-      'Press {up} to rest, read, talk or travel when a prompt appears.',
+      'Press {interact} to rest, read, talk or travel when a prompt appears.',
     ],
 
     // World prompts (interactable promptText)
@@ -1126,7 +1168,7 @@
     sealDoorOpen: 'The three Warden flames kindle in their sockets. The door yields.',
     sealDoorCount: 'Warden Seals: {n} / 3',
     wispReclaimed: 'Cinders reclaimed',
-    wispHint: 'Where you fell, your Gutterwisp lingers with your Cinders. Strike it to take them back.',
+    wispHint: 'Your Gutterwisp waits on the way back, holding your Cinders. Strike it to take them back.',
     noEmber: 'Not enough Ember',
 
     // Lanternway menu
@@ -1173,12 +1215,16 @@
     kilnGlass: 'Kiln Glass',
     sparks: "Chandler's Sparks",
     seals: 'Warden Seals',
+    sealsHeld: 'Warden Seals: {n}',
+    heartwaxHalf: 'Half of a new candle. One more shard will complete it.',
+    heartwaxNone: 'No loose shards: every pair has fused into a candle.',
     unknown: '???',
     notFound: 'Not yet found',
 
     // Shops
     buy: 'Buy',
     sold: 'Sold',
+    noChartsYet: 'Nothing yet',
     owned: 'Owned',
     price: 'Price',
     leave: 'Leave',

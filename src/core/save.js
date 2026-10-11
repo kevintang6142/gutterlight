@@ -74,6 +74,22 @@
   };
   G.settings = Object.assign({}, SETTINGS_DEFAULTS);
 
+  // Control bindings live in G.settings.bindings ({v, slots, extra}; shared by every save slot). G.input validates
+  // them (unknown/corrupt entries -> defaults) and keeps G.settings.bindings in sync on every change.
+  function loadBindings() {
+    const inp = G.input;
+    if (!inp || typeof inp.loadBindings !== 'function') return;
+    try { G.settings.bindings = inp.loadBindings(G.settings.bindings); } catch (e) {
+      G.settings.bindings = inp.loadBindings(null);
+      if (G.reportError) G.reportError(e, 'Save.loadBindings');
+    }
+  }
+  function bindingsOut() {
+    const inp = G.input;
+    if (inp && typeof inp.serializeBindings === 'function') return inp.serializeBindings();
+    return G.settings.bindings && typeof G.settings.bindings === 'object' ? G.settings.bindings : null;
+  }
+
   // ---- multi-window safety (QA robust r2: a second tab silently overwrote newer progress on the same slot) ----
   // Every slot write carries a unique `_stamp` (first key of the JSON). `known` holds, per slot, the stamp this session
   // loaded, claimed or last wrote (MISSING = the slot was empty). A save whose stored stamp differs (another window
@@ -164,6 +180,30 @@
       const cur = readRaw('slot' + slot);
       track(slot, cur ? stampOf(cur) : MISSING);
     },
+    /**
+     * Hardcore permadeath mark (game.playerDied). Unlike save(), it ignores the stale/stamp guards: a death must never
+     * be undone because another window touched the slot. It re-reads the stored slot and, only when that is the SAME
+     * hardcore run (mode 'hardcore' and, when either side has one, the same runId), sets broken / wisp=null / diedIn /
+     * health 0 (+ playTime when given) and writes it with a fresh stamp, which this session then tracks. A missing slot
+     * or a different run is left alone. info = { runId, diedIn, playTime }. Returns true when the stored run is broken.
+     */
+    markBroken(slot, info) {
+      info = info || {};
+      const data = parseSlot(slot);
+      if (!data || data.mode !== 'hardcore') return false;
+      if ((info.runId || data.runId) && info.runId !== data.runId) return false;
+      data.broken = true;
+      data.wisp = null;
+      data.health = 0;
+      if (typeof info.diedIn === 'string') data.diedIn = info.diedIn;
+      if (typeof info.playTime === 'number' && isFinite(info.playTime)) data.playTime = info.playTime;
+      const stamp = newStamp();
+      let raw;
+      try { raw = JSON.stringify(Object.assign({ _stamp: stamp }, data)); } catch (e) { G.reportError(e, 'Save.markBroken'); return false; }
+      const ok = writeRaw('slot' + slot, raw);
+      track(slot, stamp); // (a failed write keeps the copy in memory, which readRaw then returns)
+      return ok;
+    },
     /** true when another window changed this slot since this session loaded/claimed/last wrote it. */
     isStale(slot) { return stale.has(slot); },
     remove(slot) { if (validSlot(slot)) { removeRaw('slot' + slot); known.delete(slot); stale.delete(slot); } },
@@ -173,7 +213,10 @@
     summary(slot) {
       const p = parseSlot(slot); // a peek: does not (re)track the slot
       if (!p) return { slot, exists: false };
-      const roomId = (p.sconce && p.sconce.room) || p.lastRoom || null;
+      // difficulty: a save without one predates the modes (= easy); broken = a hardcore run that ended in death
+      const mode = (p.mode === 'standard' || p.mode === 'hardcore') ? p.mode : 'easy';
+      const broken = mode === 'hardcore' && p.broken === true;
+      const roomId = (broken && typeof p.diedIn === 'string' && p.diedIn) || (p.sconce && p.sconce.room) || p.lastRoom || null;
       let regionId = null, regionName = '';
       try {
         const def = roomId && G.World && G.World.getRoom ? G.World.getRoom(roomId) : null;
@@ -187,7 +230,7 @@
       let completion = 0;
       try { completion = G.game && G.game.completionOf ? G.game.completionOf(p) : 0; } catch (e) { completion = 0; }
       return {
-        slot, exists: true, regionId, regionName,
+        slot, exists: true, regionId, regionName, mode, broken,
         playTime: pt, playTimeText: G.U.formatTime(pt),
         // a finished run continues from before the final fight (G.game migrate): `endingsSeen` keeps the slot complete
         completion, completed: !!p.completed || seen.length > 0,
@@ -204,14 +247,19 @@
         try {
           const s = JSON.parse(raw);
           for (const k in SETTINGS_DEFAULTS) if (s && typeof s[k] === typeof SETTINGS_DEFAULTS[k]) G.settings[k] = s[k];
+          // control bindings (an object, so not covered by the primitive check above): validated by G.input
+          if (s && s.bindings && typeof s.bindings === 'object') G.settings.bindings = s.bindings;
         } catch (e) { /* keep defaults */ }
       }
+      loadBindings();
       G.Save.applySettings();
       return G.settings;
     },
     saveSettings() {
       const out = {};
       for (const k in SETTINGS_DEFAULTS) out[k] = G.settings[k];
+      const b = bindingsOut();
+      if (b) out.bindings = b;
       writeRaw('settings', JSON.stringify(out));
       G.Save.applySettings();
     },

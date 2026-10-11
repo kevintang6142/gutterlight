@@ -2,7 +2,8 @@
 // tools/ui_selftest.js — headless self-test of the UI module (src/ui/*).
 // Opens every screen through the G.UI API with fake progress states (empty, mid-game, complete), navigates with
 // virtual input, asserts behaviour (flow, blocking, purchases, equipping, settings, callbacks) and screenshots
-// each state to test-output/ui/*.png.
+// each state to test-output/ui/*.png. No-spoiler audit (T.capture/T.invAudit): every string and icon drawn is
+// recorded; inventory/map/cards/Lanternway must never draw unowned names/icons, placeholders or "x / total".
 //
 //   node tools/ui_selftest.js            # everything
 //   node tools/ui_selftest.js map shop   # only scenarios whose name contains one of the filters
@@ -153,6 +154,55 @@ function pageHelpers() {
     }
     return p;
   };
+  // ---- no-spoiler audit: capture every string drawn (fillText/strokeText/UI.spacedText) and every icon drawn
+  // (UI.icons.item/sigil/ability) during one G.debug.render() ----
+  T.capture = (fn) => {
+    const out = { strs: [], icons: [] };
+    const CP = CanvasRenderingContext2D.prototype, I = G.UI.icons;
+    const f0 = CP.fillText, s0 = CP.strokeText, sp0 = G.UI.spacedText, it0 = I.item, sg0 = I.sigil, ab0 = I.ability;
+    CP.fillText = function (txt) { out.strs.push(String(txt)); return f0.apply(this, arguments); };
+    CP.strokeText = function (txt) { out.strs.push(String(txt)); return s0.apply(this, arguments); };
+    G.UI.spacedText = function (ctx, txt) { out.strs.push(String(txt)); return sp0.apply(this, arguments); };
+    I.item = function (ctx, kind) { out.icons.push('item:' + kind); return it0.apply(this, arguments); };
+    I.sigil = function (ctx, id, x, y, size, o) { out.icons.push((o && o.empty ? 'emptysigil:' : 'sigil:') + id); return sg0.apply(this, arguments); };
+    I.ability = function (ctx, id) { out.icons.push('ability:' + id); return ab0.apply(this, arguments); };
+    try { if (fn) fn(); G.debug.render(); } finally { CP.fillText = f0; CP.strokeText = s0; G.UI.spacedText = sp0; I.item = it0; I.sigil = sg0; I.ability = ab0; }
+    return out;
+  };
+  T.SLASH = /\d\s*\/\s*\d/;              // any "x / y" counter
+  T.names = () => {
+    const tx = G.UI.text;
+    return {
+      ab: G.Items.order.abilities.map((id) => [id, tx('abilities.' + id + '.name', id)]),
+      sg: Object.keys(G.Items.sigils).map((id) => [id, tx('sigils.' + id + '.name', id)]),
+      relic: [['heartwax', tx('items.heartwax.name', 'Heartwax Shard')], ['urn', tx('items.urn.name', 'Ember Urn')], ['kiln_glass', tx('items.kiln_glass.name', 'Kiln Glass')],
+        ['spark', tx('items.spark.name', "Chandler's Spark")], ['seal', tx('ui.seals', 'Warden Seals')]],
+    };
+  };
+  // render the open inventory with nothing and then every cell selected; report leaks
+  T.invAudit = () => {
+    const s = G.UI.top(), p = G.game.progress, N = T.names();
+    const strs = new Set(), icons = new Set();
+    const add = (c) => { c.strs.forEach((x) => strs.add(x)); c.icons.forEach((x) => icons.add(x)); };
+    const sel0 = s.sel;
+    s.sel = -1; add(T.capture());
+    for (let i = 0; i < s.cells.length; i++) { s.sel = i; add(T.capture()); }
+    s.sel = sel0;
+    const own = G.UI.inventoryOwned(p);
+    const unAb = N.ab.filter(([id]) => !p.abilities[id]), unSg = N.sg.filter(([id]) => p.sigils.indexOf(id) < 0);
+    const unRelic = N.relic.filter(([id]) => own.relics.indexOf(id) < 0);
+    const all = [...strs];
+    return {
+      cells: s.cells.map((c) => c.kind + ':' + c.id),
+      slash: all.filter((x) => T.SLASH.test(x)),
+      unownedNames: all.filter((x) => unAb.some(([, n]) => n === x) || unSg.some(([, n]) => n === x) || unRelic.some(([, n]) => n === x)),
+      banned: all.filter((x) => /\?\?\?|Not yet found/.test(x) || x.indexOf(G.UI.text('ui.completion', 'Completion')) === 0),
+      unownedIcons: [...icons].filter((k) => /^emptysigil:/.test(k) || (/^ability:/.test(k) && !p.abilities[k.slice(8)]) || (/^sigil:/.test(k) && p.sigils.indexOf(k.slice(6)) < 0)
+        || (/^item:seal_/.test(k) && (p.seals || []).indexOf(k.slice(10)) < 0)),
+      sealIcons: [...icons].filter((k) => /^item:seal_/.test(k)).sort().join(','),
+      sections: all.filter((x) => x === G.UI.text('ui.abilities', 'Abilities') || x === G.UI.text('ui.relics', 'Relics')),
+    };
+  };
   T.enter = (roomId) => {
     const s = T.world && T.world.spawns[roomId];
     G.game.enterRoom(roomId, s ? { tx: s.tx, ty: s.ty } : {});
@@ -295,6 +345,20 @@ scenario('map', async (page) => {
   check('map: charted-unvisited rooms are faint', info.faint === 'dn_91,dn_92,dn_93,gw_93', info);
   check('map: waymoth marks uncollected pickups', info.relics === 4, info);
   await snap(page, '30_map_mid');
+  const lg = await ev(page, () => {
+    const s = G.UI.top(), kinds = new Set(s.rooms.flatMap((r) => r.markers.map((m) => m.kind)));
+    const c = T.capture();
+    return { legend: G.UI.mapLegendKinds(s).join(), kinds: [...kinds].sort().join(), slash: c.strs.filter((x) => T.SLASH.test(x)), door: c.strs.indexOf(G.UI.text('ui.mapLegend.door', 'Seal Door')) >= 0 };
+  });
+  check('map(mid): legend = only the icon kinds on the map (door room visited → Seal Door listed)', lg.legend === 'you,sconce,lanternway,shop,npc,relic,door' && lg.door && !lg.slash.length, lg);
+  const lg2 = await ev(page, () => {
+    G.UI.closeAll(false); delete G.game.progress.visited.gw_95; G.game.unequip('waymoth'); G.UI.openMap(); T.step(5);
+    const s = G.UI.top(), c = T.capture(), L = (k, fb) => G.UI.text('ui.mapLegend.' + k, fb);
+    const r = { legend: G.UI.mapLegendKinds(s).join(), door: c.strs.indexOf(L('door', 'Seal Door')) >= 0, relic: c.strs.indexOf(L('relic', 'Unclaimed Relic')) >= 0 };
+    G.UI.closeAll(false); G.game.progress.visited.gw_95 = true; G.game.equip('waymoth'); G.UI.openMap(); T.step(5);
+    return r;
+  });
+  check('map: no Seal Door legend before its room is visited, no relic legend without waymoth', lg2.legend === 'you,sconce,lanternway,shop,npc' && !lg2.door && !lg2.relic, lg2);
   await ev(page, () => { T.press('jump'); T.step(20); T.hold('left', 30); });
   await snap(page, '31_map_zoom_pan');
   await ev(page, () => { T.press('dash'); T.press('dash'); T.step(20); });
@@ -325,13 +389,42 @@ scenario('map', async (page) => {
   check('map: npc markers only where the NPC is present', np === 'true,true,false,false,true,false,true,false,true', np);
   await ev(page, () => { G.UI.closeAll(false); T.fixture('empty'); G.game.enterRoom('dev_shaft', { tx: 10, ty: 34 }); G.UI.openMap(); T.step(20); });
   check('map: empty state (dev room)', await ev(page, () => G.UI.top().rooms.length === 0 && !G.UI.top().you));
+  check('map(empty): empty legend', (await ev(page, () => G.UI.mapLegendKinds().join())) === '');
   await snap(page, '35_map_empty');
+  const lg3 = await ev(page, () => { G.UI.closeAll(false); T.fixture('empty'); T.enter('gw_92'); G.UI.openMap(); T.step(20); const c = T.capture(); return { legend: G.UI.mapLegendKinds().join(), merchant: c.strs.indexOf(G.UI.text('ui.mapLegend.shop', 'Merchant')) >= 0, rooms: G.UI.top().rooms.length }; });
+  check('map(first room): legend lists only what this room shows (no Merchant/Sconce yet)', lg3.rooms === 1 && !lg3.merchant && !/shop|sconce|door|relic/.test(lg3.legend), lg3);
+  await snap(page, '36_map_first_room');
 });
 
 scenario('inventory', async (page) => {
   await ev(page, () => { T.reset(); T.buildWorld(); T.fixture('empty'); T.enter('gw_92'); G.UI.clearOverlays(); G.UI.openInventory({}); T.step(25); });
   await snap(page, '40_inventory_empty');
+  const a0 = await ev(page, () => T.invAudit());
+  check('inventory(empty): no cells (no placeholders for unfound things)', a0.cells.length === 0, a0.cells);
+  check('inventory(empty): no unowned names / icons, no Abilities/Relics sections', !a0.unownedNames.length && !a0.unownedIcons.length && !a0.sections.length, a0);
+  check('inventory(empty): no "x / y" counters, "???", completion %', !a0.slash.length && !a0.banned.length, a0);
+  // no Sigil pane before the first Sigil (Hollow Knight's Charms pane): no header, notch pips, Equipped row or Sconce hint.
+  // Pips are counted as stroked paths; forcing layout.hasSigils on must add them, proving the counter sees them.
+  const sg0 = await ev(page, () => {
+    const tx = G.UI.text, bad = [tx('ui.sigils', 'Sigils'), tx('ui.notches', 'Notches'), tx('ui.equipped', 'Equipped'), tx('ui.restToEquip', 'Rest at a Sconce to change Sigils'), '—'];
+    const CP = CanvasRenderingContext2D.prototype, st0 = CP.stroke;
+    const run = () => { let n = 0; CP.stroke = function () { n++; return st0.apply(this, arguments); }; let c; try { c = T.capture(); } finally { CP.stroke = st0; } return { n, strs: c.strs }; };
+    const s = G.UI.top(), off = run(); s.layout.hasSigils = true; const on = run(); s.layout.hasSigils = false;
+    return { strs: off.strs.filter((x) => bad.some((b) => x.indexOf(b) === 0)), pipStrokes: on.n - off.n, notches: G.game.progress.notches, onStrs: on.strs.filter((x) => x === bad[0]).length };
+  });
+  check('inventory(empty): no Sigil pane (no Sigils/Notches/Equipped/Sconce text, no notch pips)', !sg0.strs.length && sg0.onStrs === 1 && sg0.pipStrokes >= sg0.notches && sg0.notches > 0, sg0);
   await ev(page, () => { G.UI.closeAll(false); T.fixture('mid'); G.UI.openInventory({ atSconce: true }); T.step(25); });
+  const a1 = await ev(page, () => T.invAudit());
+  check('inventory(mid): only owned abilities, held relic types and owned sigils (found order)',
+    a1.cells.join() === 'ability:bolt,ability:dash,ability:grip,relic:heartwax,relic:urn,relic:kiln_glass,relic:spark,relic:seal,'
+      + 'sigil:waymoth,sigil:swift_brand,sigil:heartwax,sigil:bright_bolt,sigil:thorned_wax,sigil:cinder_lure,sigil:steadfast', a1.cells);
+  check('inventory(mid): no unowned names or icons drawn (abilities, sigils, relics, seal sockets)', !a1.unownedNames.length && !a1.unownedIcons.length && a1.sealIcons === 'item:seal_bell', a1);
+  check('inventory(mid): no "x / y" counters, "???", completion %', !a1.slash.length && !a1.banned.length, { slash: a1.slash, banned: a1.banned });
+  const a1b = await ev(page, () => { const p = G.game.progress, q = { heartShards: p.heartShards, urns: p.urns, kilnGlass: p.kilnGlass, seals: p.seals };
+    p.heartShards = 2; p.urns = 0; p.kilnGlass = 0; p.seals = ['wing', 'bell']; G.UI.closeAll(false); G.UI.openInventory({}); T.step(5);
+    const r = T.invAudit(); G.UI.closeAll(false); Object.assign(p, q); G.UI.openInventory({ atSconce: true }); T.step(5); return r; });
+  check('inventory: relic types appear only while held (no urn / spent glass), seals = only the obtained ones',
+    a1b.cells.filter((c) => /^relic/.test(c)).join() === 'relic:heartwax,relic:spark,relic:seal' && a1b.sealIcons === 'item:seal_bell,item:seal_wing' && !a1b.slash.length, a1b);
   // first sigil preselected at a sconce; move to bright_bolt (index 8) and equip
   const eq = await ev(page, () => {
     const s = G.UI.top();
@@ -351,7 +444,7 @@ scenario('inventory', async (page) => {
   await ev(page, () => { const s = G.UI.top(); s.sel = s.cells.findIndex((c) => c.kind === 'sigil' && c.id === 'swift_brand'); T.press('confirm'); });
   check('inventory: unequip at a sconce', (await ev(page, () => G.game.isEquipped('swift_brand'))) === false);
   await ev(page, () => { const s = G.UI.top(); s.sel = 0; T.press('right'); T.press('down'); });
-  check('inventory: spatial navigation (bolt → dash → plunge)', (await ev(page, () => G.UI.top().cells[G.UI.top().sel].id)) === 'plunge');
+  check('inventory: spatial navigation (bolt → dash → kiln_glass)', (await ev(page, () => G.UI.top().cells[G.UI.top().sel].id)) === 'kiln_glass');
   await ev(page, () => { T.press('inventory'); T.step(20); });
   check('inventory: closes with inventory', await ev(page, () => !G.UI.isOpen('inventory')));
   await ev(page, () => { G.UI.openInventory({ atSconce: false }); T.step(20); const s = G.UI.top(); s.sel = s.cells.findIndex((c) => c.kind === 'sigil' && c.id === 'waymoth'); T.press('confirm'); });
@@ -360,6 +453,13 @@ scenario('inventory', async (page) => {
   await snap(page, '42_inventory_mid_not_sconce_relic');
   await ev(page, () => { G.UI.closeAll(false); T.fixture('complete'); G.UI.openInventory({ atSconce: true }); T.step(25); const s = G.UI.top(); s.sel = s.cells.findIndex((c) => c.kind === 'sigil' && c.id === 'deep_kindle'); T.step(2); });
   await snap(page, '43_inventory_complete');
+  const a2 = await ev(page, () => T.invAudit());
+  check('inventory(complete): every ability and sigil listed, no counters with totals',
+    a2.cells.filter((c) => /^ability/.test(c)).length === 6 && a2.cells.filter((c) => /^sigil/.test(c)).length === 14 && !a2.slash.length && !a2.banned.length && !a2.unownedIcons.length, a2);
+  const a3 = await ev(page, () => { G.UI.closeAll(false); const p = G.game.progress; const ab = p.abilities; p.abilities = { dash: true }; G.UI.openInventory({}); T.step(25); const r = T.invAudit(); return r; });
+  check('inventory: a single ability is laid out alone (no slots for the rest)', a3.cells.filter((c) => /^ability/.test(c)).join() === 'ability:dash' && !a3.unownedNames.length && !a3.unownedIcons.length, a3);
+  await snap(page, '45_inventory_one_ability');
+  await ev(page, () => { G.UI.closeAll(false); T.fixture('complete'); G.UI.openInventory({ atSconce: true }); T.step(25); });
   await ev(page, () => { const s = G.UI.top(); s.sel = s.cells.findIndex((c) => c.kind === 'ability' && c.id === 'plunge'); T.step(2); });
   await snap(page, '44_inventory_complete_ability');
 });
@@ -412,6 +512,8 @@ scenario('dialogue', async (page) => {
   await snap(page, '54_lore_long');
   await ev(page, () => { G.UI.closeAll(false); G.game.progress.sparks.push('spark_gw'); G.UI.sparkMemory('spark_gw', () => { window.__spark = true; }); T.step(150); });
   await snap(page, '55_spark_memory');
+  const spk = await ev(page, () => { const c = T.capture(); return { slash: c.strs.filter((x) => T.SLASH.test(x)), head: c.strs.filter((x) => x.indexOf(G.UI.text('items.spark.name', "Chandler's Spark")) === 0) }; });
+  check('sparkMemory: header without a "n / total" counter', !spk.slash.length && spk.head.length && spk.head[0] === G_SPARK_NAME, spk);
   await ev(page, () => { for (let i = 0; i < 8; i++) { T.press('confirm'); T.step(70); } T.step(80); });
   check('sparkMemory: completes and calls onDone', await ev(page, () => window.__spark === true && !G.UI.isOpen('sparkMemory')));
 });
@@ -438,6 +540,19 @@ scenario('shop', async (page) => {
   await snap(page, '62_shop_pell_poor');
   await ev(page, () => { T.press('cancel'); T.step(30); });
   check('shop: leaving calls onDone', await ev(page, () => window.__shop === true && !G.UI.isOpen('shop')));
+  // Quill lists only charts of known regions (entered or a room visited): a fresh save sees none, entering a region adds it
+  const qk = await ev(page, () => {
+    const p = G.game.progress, keep = { visited: p.visited, flags: p.flags, charts: p.charts };
+    const names = () => G.UI.shopRows('quill').map((r) => r.region).join();
+    p.visited = { ll_91: true }; p.flags = {}; p.charts = {};
+    const none = names(); G.UI.openShop('quill'); T.step(5); const speech = G.UI.top().speech; G.UI.closeAll(false);
+    p.flags['region:rime'] = true; const byFlag = names();
+    p.flags = {}; p.visited.gw_91 = true; const byVisit = names();
+    Object.assign(p, keep);
+    return { none, speech, emptyLine: G.UI.text('shops.quill.empty', ''), byFlag, byVisit };
+  });
+  check('shop: Quill hides charts of unknown regions (fresh: none, "go explore" line; known by region flag or visited room)',
+    qk.none === '' && qk.speech !== qk.emptyLine && /edge/.test(qk.speech) && qk.byFlag === 'rime' && qk.byVisit === 'guttered', qk);
   await ev(page, () => { G.game.progress.cinders = 500; G.UI.openShop('quill'); T.step(25); });
   await snap(page, '63_shop_quill');
   const chart = await ev(page, () => { T.press('confirm'); T.press('left'); T.press('confirm'); T.step(10); return { charts: Object.keys(G.game.progress.charts).sort().join(), cinders: G.game.progress.cinders }; });
@@ -452,6 +567,9 @@ scenario('shop', async (page) => {
   await snap(page, '66_shop_bramm_maxed');
   await ev(page, () => { G.UI.closeAll(false); T.fixture('mid'); T.step(2); window.__lw = null; G.UI.openLanternway('lastlight', (id) => { window.__lw = id || 'none'; }); T.step(25); });
   await snap(page, '67_lanternway');
+  const lwc = await ev(page, () => { const c = T.capture(); const lit = Object.keys(G.game.progress.lanterns); const names = ['lastlight', 'guttered', 'meltbloom', 'nave', 'chandlery', 'mothwood', 'rime'].map((id) => [id, G.UI.regionName(id)]);
+    return { unknown: c.strs.filter((x) => x === G.UI.text('ui.unknown', '???') || x === G.UI.text('ui.lanternwayUnlit', 'Unlit')), unlitNames: names.filter(([id, n]) => lit.indexOf(id) < 0 && c.strs.indexOf(n) >= 0).map(([id]) => id), litShown: names.filter(([id, n]) => lit.indexOf(id) >= 0 && c.strs.indexOf(n) >= 0).length }; });
+  check('lanternway: unlit posts are not listed (no "???"/"Unlit" rows, no unlit names)', !lwc.unknown.length && !lwc.unlitNames.length && lwc.litShown === 3, lwc);
   const lw = await ev(page, () => { const s = G.UI.top(); const first = s.sel; T.press('down'); const second = s.sel; T.press('up'); T.press('confirm'); T.step(30); return { first, second, lw: window.__lw, locks: G.game.lockReasons() }; });
   check('lanternway: lit posts only, travel starts on confirm', lw.first === 1 && lw.second === 3 && lw.lw === 'guttered' && lw.locks.indexOf('travel') >= 0, lw);
   await ev(page, () => { T.step(120); });
@@ -477,10 +595,13 @@ scenario('cards', async (page) => {
   check('cards: ability card closes on confirm and calls onDone', await ev(page, () => window.__ab === 1 && !G.UI.isBlocking()));
   await ev(page, () => { G.UI.abilityGet('plunge'); T.step(110); });
   await snap(page, '74_ability_get_plunge');
-  for (const [spec, name] of [['seal:bell', '75_item_get_seal'], ['sigil:waymoth', '76_item_get_sigil'], ['notch', '77_item_get_notch'], ['kiln_glass', '78_item_get_kiln'], ['urn', '79_item_get_urn']]) {
-    await ev(page, (sp) => { G.UI.closeAll(false); G.UI.itemGet(sp); T.step(60); }, spec);
+  const slashes = [];
+  for (const [spec, name] of [['seal:bell', '75_item_get_seal'], ['sigil:waymoth', '76_item_get_sigil'], ['notch', '77_item_get_notch'], ['kiln_glass', '78_item_get_kiln'], ['urn', '79_item_get_urn'], ['spark', '7a_item_get_spark'], ['heartwax', '7b_item_get_heartwax_half']]) {
+    const c = await ev(page, (sp) => { G.UI.closeAll(false); G.UI.itemGet(sp); T.step(60); return T.capture().strs.filter((x) => T.SLASH.test(x)); }, spec);
+    slashes.push(...c);
     await snap(page, name);
   }
+  check('cards: item cards show counts without totals (no "x / y")', slashes.length === 0, slashes);
   await ev(page, () => { T.press('confirm'); T.step(30); });
   await ev(page, () => {
     G.UI.closeAll(false); G.UI.clearOverlays();
@@ -536,6 +657,7 @@ scenario('ending', async (page) => {
   const { page, errors } = await openGame({ query: 'test=1&paused=1&room=dev_shaft&tx=10&ty=34&seed=7&mute=1' });
   await page.evaluate(pageHelpers);
   global.G_TEXT_POOR = await page.evaluate(() => G.Text.shops.pell.poor);
+  global.G_SPARK_NAME = await page.evaluate(() => G.UI.text('items.spark.name', "Chandler's Spark"));
   const t0 = Date.now();
   for (const sc of scenarios) {
     if (filters.length && !filters.some((f) => sc.name.indexOf(f) >= 0)) continue;

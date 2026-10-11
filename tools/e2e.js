@@ -77,7 +77,12 @@ const INSTRUMENT = `
   s = await ev(`E.press('confirm'); E.step(40); const t = G.UI.find('title'); return { view: t && t.view, slotMode: t && t.slotMode };`);
   check('title: New Game → slot select', s.view === 'slots' && s.slotMode === 'new', s);
   await shot('03_title_slots');
-  s = await ev(`E.press('confirm'); const n = E.waitFor(() => E.ui().includes('intro'), 200); E.step(90); return { n, ui: E.ui(), mode: G.game.mode };`);
+  // slot → "Choose a Trial" (cursor starts on Standard) → confirm Standard (the intended mode)
+  s = await ev(`E.press('confirm'); E.step(30); const t = G.UI.find('title'); return { view: t && t.view, sel: t && t.modeSel };`);
+  check('new game: slot → trial chooser (default Standard)', s.view === 'modes' && s.sel === 1, s);
+  await shot('03b_title_modes');
+  s = await ev(`E.press('confirm'); const n = E.waitFor(() => E.ui().includes('intro'), 200); E.step(90); return { n, ui: E.ui(), mode: G.game.mode, diff: G.game.difficulty && G.game.difficulty(), tele: G.game.telegraphs && G.game.telegraphs() };`);
+  check('new game: Standard chosen (no explicit telegraphs)', s.diff === 'standard' && s.tele === false, s);
   check('new game: intro verse plays', s.n >= 0 && s.ui.includes('intro'), s);
   await shot('04_intro');
   // let the intro run a little, then skip (cancel)

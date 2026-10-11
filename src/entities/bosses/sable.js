@@ -26,6 +26,8 @@
   const C = () => (G.Art && G.Art.char) || null;
   const glow = (ctx, x, y, r, color, a) => { if (G.Art && G.Art.glow) G.Art.glow(ctx, x, y, r, color, a); else if (G.fx && G.fx.glowAt) G.fx.glowAt(ctx, x, y, r, color, a); };
   const burst = (k, x, y, o) => { if (G.fx) G.fx.burst(k, x, y, o); };
+  /** Explicit telegraphs (dive landing ring / beam / chevrons, whirl reach ring) draw only in easy (docs/api/boss-sable.md). */
+  const teleOn = () => (G.telegraphsOn ? G.telegraphsOn() : true);
 
   // ---------------------------------------------------------------------------------------------------------
   // Palette
@@ -749,6 +751,11 @@
       if (this.ring) this.ring.t += dt;
       if (this.aura > 0 && G.fx && Math.random() < dt * 10) G.fx.burst('snow', this.cx + rnd(-30, 30), this.feet - rnd(10, 100), { count: 1, color: '#e8f8ff', speed: 30, angle: -Math.PI / 2 });
       if (G.lighting && !this.gone) G.lighting.add({ x: this.cx, y: this.feet - 70, r: 150, color: this.late ? '#bfe6ff' : '#c8b8ff', intensity: 0.16 });
+      // standard / hardcore dive tell (replaces the landing mark): hanging at the vault she flares — light + hook sparks
+      if (this.state === 'dive' && this.stateData && this.stateData.ph === 'hang' && !teleOn() && !this.gone) {
+        if (G.lighting) G.lighting.add({ x: this.cx, y: this.feet - 62, r: 190, color: this.late ? TELE_ICE : TELE, intensity: 0.55 });
+        if (G.fx && Math.random() < dt * 22) G.fx.burst('spark', this.cx + rnd(-26, 26), this.feet - rnd(30, 100), { count: 1, color: this.late ? TELE_ICE : TELE, speed: 120 });
+      }
     }
     physicsStep(dt) { super.physicsStep(dt); this.animate(dt); }
     updateDeath(dt) { super.updateDeath(dt); if (!this.dead) this.animate(dt); }
@@ -1333,10 +1340,13 @@
         const n = this.rigNow.neck, a = this.wpt(n.x - 3, n.y + 4);
         drawScarf(ctx, this.scarf, this.frostLevel > 0.5, a.x, a.y, f, t);
       }
+      // standard / hardcore: hanging at the vault before the dive she flares (halo + hot hook) instead of the floor mark
+      const hangTell = !teleOn() && this.state === 'dive' && this.stateData && this.stateData.ph === 'hang';
+      if (hangTell) glow(ctx, this.cx, this.feet - 62, 80, this.late ? TELE_ICE : TELE, 0.6 + 0.25 * Math.sin(t * 24));
       ctx.save();
       ctx.translate(fx, fy);
       ctx.scale(f, 1);
-      const hot = this.telegraphing;
+      const hot = this.telegraphing || hangTell;
       const blink = ch && ch.blinkAt && this.state === 'idle' ? ch.blinkAt(t, 4) : 0;
       drawSable(ctx, this.pose, {
         t, light: -f, frost: this.frostLevel, eyes: this.late && this.phase >= 2 ? 'ice' : undefined, armed: this.armed,
@@ -1345,6 +1355,7 @@
       ctx.restore();
     }
     drawMarks(ctx, t) {
+      if (!teleOn()) return;
       for (const m of this.marks) {
         const k = clamp(m.t / Math.max(0.05, m.dur), 0, 1);
         const a = m.t > m.dur ? clamp(1 - (m.t - m.dur) / 0.25, 0, 1) : clamp(m.t / 0.12, 0, 1);
@@ -1382,7 +1393,7 @@
       const col = this.late ? '#d8f2ff' : '#cfc6e4';
       ctx.save();
       if (!r.active) {
-        if (front) { ctx.restore(); return; }
+        if (front || !teleOn()) { ctx.restore(); return; }   // standard: the gathering smoke + spin-up pose are the tell
         const k = clamp(r.t / Math.max(0.1, r.warn), 0, 1);
         ctx.globalAlpha = 0.25 + 0.5 * k;
         ctx.strokeStyle = col; ctx.lineWidth = 3;

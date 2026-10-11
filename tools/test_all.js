@@ -5,7 +5,7 @@
 //
 //   node tools/test_all.js                     everything (≈ 6.5 min on a 16-core machine)
 //   node tools/test_all.js --quick             skip the slow, rarely-affected steps (motor, audio, art, plan_render,
-//                                              playthrough, e2e_dist) — about 2 min
+//                                              modes_tele, playthrough, e2e_dist) — about 2 min
 //   node tools/test_all.js --only engine,ui    run only these steps (names from --list)
 //   node tools/test_all.js --skip art,audio    run everything except these
 //   node tools/test_all.js --from smoke        start at this step
@@ -43,7 +43,11 @@ const STEPS = [
   ['reach_margin', ['tools/reach.js', '--margin'], 'reach: plan paths/spots still work with a handicapped motor (no zero-margin moves on the critical path)'],
   ['smoke', ['tools/smoke.js'], 'title → new game → play, save/continue, every room toured'],
   ['e2e', ['tools/e2e.js'], 'the real boot flow end to end (title … wisp … continue)'],
-  ['playthrough', ['tools/playthrough.js'], 'the whole critical path played in the real game: New Game → both endings (≈ 5 min)', true],
+  ['input', ['tools/input_check.js'], 'control rebinding: real mouse/keyboard events, mocked gamepad, Controls screen, lockout fallbacks, persistence'],
+  ['rebind', ['tools/rebind_check.js'], 'rebinding QA regressions: menu fallbacks vs bindings, browser shortcuts, pad pause, pad capture, Controls notes'],
+  ['modes', ['tools/modes_check.js', 'contract', 'wisp', 'engine'], 'difficulty modes: ?mode/defaults/migration, Choose a Trial, hardcore permadeath, the Gutterwisp after every boss death'],
+  ['modes_tele', ['tools/modes_check.js', 'tele', 'leap'], 'every boss in easy/standard/hardcore: standard = hardcore frames, easy draws its explicit telegraphs, no errors', true],
+  ['playthrough', ['tools/playthrough.js'], 'the whole critical path played in the real game in Standard: New Game → both endings (≈ 5 min)', true],
   ['build', ['tools/build.js'], 'dist/Gutterlight.html (single file) + boot verification'],
   ['e2e_dist', ['tools/e2e.js', '--file', 'dist/Gutterlight.html'], 'the end-to-end flow on the single-file build', true],
 ];

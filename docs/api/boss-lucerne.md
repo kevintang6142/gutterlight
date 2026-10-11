@@ -86,6 +86,26 @@ The rematch above is a defensive fallback for a progress object that is complete
 - 23 sfx `lucerne_*` (charge, lock, beam, motes, release, raise, crack, spike, gather, nova, blink, dive, slam, cry,
   fuse, sweep_charge, sweep, inhale, pulse, pane, glass, shatter, pull). Music `lucerne` (G.Boss default mapping).
 
+## Telegraphs by mode (difficulty modes)
+
+`teleOn()` (top of `lucerne.js`) = `G.telegraphsOn()` (falls back to `G.game.telegraphs()`, default easy), read only at
+draw time: hitboxes, timings, aim locks and ring plans are identical in all modes. **Easy** looks and plays exactly as
+before. **Standard / hardcore**:
+
+| Attack | Easy (explicit, as before) | Standard / hardcore | Diegetic tell (all modes; lead time) |
+|---|---|---|---|
+| `beam` (both forms) | dashed guide line tracking the player (0.85/0.6 s), then a bright locked line + edge lines (0.45 s) | **removed** the tracking guide; **kept-subtle** the locked line only: one thin 2-px faint line, no edge lines, for the 0.45-s lock (`drawBeamSubtle`). *Why*: a lance can come at any angle from a hovering source and crosses the whole hall; in form 2 three or four lances come from a faceless heart with no aiming limb — the only readable cue would be the angle of a small staff/heart glow. (Thin pre-lines before light beams are also Hollow Knight's own Radiance convention.) | staff aimed at the player (form 1) / eyes + flare (form 2), `lucerne_charge` / `lucerne_raise` + light gathering at the staff tip / heart through the whole wind-up; `lucerne_lock` chime + a white flare at the origin at the lock |
+| `motes` | — | unchanged | arm raised, light gathers at the crown / core 0.7 s; motes visible |
+| `spikes` | the lit column (gradient + edge bars) above each fissure | **removed** the column | staff raised 0.55 s, `lucerne_crack`; then 0.75 s of **dark glowing fissures in the surface with crystal tips pushing through**, sparks and the crack's glow (a natural precursor, all modes) |
+| `nova` | dashed circle of the blast radius | **removed** the circle | light gathers into her (growing white glow + six motes converging on her), 0.6 s |
+| `dive` | a light column under her tracking the player, brighter when it locks | **removed** (`drawDiveTell` instead) | she blinks out and reappears in view above the player, `lucerne_raise`; **added (standard)**: her light swells and sparks drip from her hem toward the floor through the 0.9-s wind-up; at the lock (0.5 s before the fall, `lucerne_lock`) she flares white |
+| `sweep` (form 2) | tinted wedge of the swept area + bright dashed outer edges + the guide/lock beam at the start angle | **kept-subtle**: only the two outer edges as thin faint dashed lines (no tinted area, no start guide). *Why*: two 2-damage lasers sweep ±60°; the "safe horizon" (|x − mid| > ~650) cannot be read from the heart's position alone, and in phase 3 down+up sweeps chain | heart moves to its spot (360 px up = down sweep, 160 px = up sweep), eyes + flare + mouth open, `lucerne_sweep_charge` + shake, 1.05 s (2nd 0.8 s); light gathers on the heart |
+| `pulse` (form 2) | lanes: dark corridor + bright dashed edges + a floor marker with arrows + lights for the next ring's gaps | **kept-subtle**: the dark corridor (dimmer) with thin faint solid edges; no dashes, no floor marker, no lights. *Why*: near-total darkness (room dark 0.9), 3 gaps per ring, rings every 1.25 s from a heart 560 px up — the gap's landing span cannot be extrapolated from a ring in time | darkness falls, the heart inhales 1.0 s; rings visible in flight |
+| panes | dashed outline while a pane fades in | unchanged (footholds, not an attack) | — |
+
+Verified (module tele-bosses2, `test-output/tele-bosses2/`): sheets easy vs standard (`cmp_l*.png`);
+`qa-boss-lucerne/test.js hit dodge flow` copy with `?mode=standard` / `?mode=easy`: ALL PASS (45) each; `enemy_selftest --boss lucerne` in both modes: ALL PASS (11).
+
 ## Tests (`node test-output/boss-lucerne/test.js [sheet hit dodge defeat chaos flow]`)
 - `hit`: 15 cases (every attack, both forms, late/P3 variants, on the floor and on decks) hurt an idle player (3 runs each).
 - `dodge`: the same 15 cases avoided by a reactive bot (0.2 s reaction, only on-screen information), 4-6 start

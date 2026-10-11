@@ -168,6 +168,14 @@
     }
     ctx.globalAlpha = 1;
   }
+  /** Key label shown over a world prompt: Interact's ('E', 'Y', '↑'); the seated-Sconce 'Inventory' prompt also
+   * answers Up, so an up arrow wins there. */
+  function promptKey(text) {
+    const lbl = UI.keyLabel('interact');
+    if (text === UI.text('ui.inventory', 'Inventory') && UI.keyLabel('up') === '↑') return '↑';
+    return lbl;
+  }
+  UI.promptKeyLabel = promptKey;   // test hook
   function drawPrompts(ctx) {
     if (!prompts.size || !playing() || UI.isBlocking()) return;
     const cam = G.camera;
@@ -187,14 +195,17 @@
       ctx.textBaseline = 'alphabetic';
       ctx.fillText(p.text, sx, y);
       UI.rule(ctx, sx, y + 8, tw / 2 + 10, C.cream, 0.5 * k);
-      // up-arrow glyph
+      // the key that does it: Interact's current binding (seated at a Sconce, Up opens the inventory too). The
+      // vector up-arrow is kept for an up-arrow binding (the defaults, D-pad / stick up); anything else is a keycap.
       const ay = y - 34 + bob;
+      const lbl = promptKey(p.text);
+      UI.glow(ctx, sx, ay, 16, '#79c4ff', 0.35 * k);
+      if (lbl !== '↑') { UI.keycap(ctx, lbl, sx, ay, 26, { color: '#d8eeff' }); continue; }
       ctx.fillStyle = '#d8eeff';
       ctx.beginPath();
       ctx.moveTo(sx, ay - 8); ctx.lineTo(sx + 8, ay + 1); ctx.lineTo(sx + 3, ay + 1); ctx.lineTo(sx + 3, ay + 7);
       ctx.lineTo(sx - 3, ay + 7); ctx.lineTo(sx - 3, ay + 1); ctx.lineTo(sx - 8, ay + 1); ctx.closePath();
       ctx.fill();
-      UI.glow(ctx, sx, ay, 16, '#79c4ff', 0.35 * k);
     }
     ctx.globalAlpha = 1;
   }
@@ -285,32 +296,33 @@
     const ci = s.indexOf(':');
     const kind = ci < 0 ? s : s.slice(0, ci), arg = ci < 0 ? '' : s.slice(ci + 1);
     const p = (G.game && G.game.progress) || {};
-    const tt = Object.assign({ heartwax: 8, urns: 2, kilnGlass: 3, sparks: 6, seals: 3, sigils: 14, notches: 6 }, (G.Items && G.Items.totals) || {});
-    const info = { name: '', desc: '', extra: '', highlight: false, stinger: 'item', icon: s };
+    // counts never carry a game total (no "x / 8"): the card says what the player now holds
+    // no soul/damage numbers either: a sigil's cost is drawn as notch pips (info.notches), the Brand has no damage line
+    const info = { name: '', desc: '', extra: '', notches: 0, highlight: false, stinger: 'item', icon: s };
     switch (kind) {
       case 'heartwax': {
         info.name = UI.text('items.heartwax.name', 'Heartwax Shard');
         info.desc = UI.text('items.heartwax.desc', '');
         const n = p.heartShards | 0;
-        if (n > 0 && n % 2 === 0) { info.extra = UI.text('items.heartwax.whole', 'The shards fuse into a new candle.'); info.highlight = true; } else info.extra = UI.text('ui.heartShards', 'Heartwax Shards') + ':  ' + n + ' / ' + tt.heartwax;
+        if (n > 0 && n % 2 === 0) { info.extra = UI.text('items.heartwax.whole', 'The shards fuse into a new candle.'); info.highlight = true; } else info.extra = UI.text('ui.heartwaxHalf', 'Half of a new candle. One more shard will complete it.');
         break;
       }
-      case 'urn': info.name = UI.text('items.urn.name', 'Ember Urn'); info.desc = UI.text('items.urn.desc', ''); info.extra = UI.text('ui.urns', 'Ember Urns') + ':  ' + (p.urns | 0) + ' / ' + tt.urns; break;
+      case 'urn': info.name = UI.text('items.urn.name', 'Ember Urn'); info.desc = UI.text('items.urn.desc', ''); break;   // no urn count (soul capacity is never a number)
       case 'kiln_glass': info.name = UI.text('items.kiln_glass.name', 'Kiln Glass'); info.desc = UI.text('items.kiln_glass.desc', ''); info.extra = UI.text('ui.kilnGlass', 'Kiln Glass') + ':  ' + (p.kilnGlass | 0); break;
-      case 'notch': info.name = UI.text('items.notch.name', 'Wax Notch'); info.desc = UI.text('items.notch.desc', ''); info.extra = UI.text('ui.notches', 'Notches') + ':  ' + (p.notches | 0) + ' / ' + tt.notches; break;
-      case 'spark': info.name = UI.text('items.spark.name', "Chandler's Spark"); info.desc = UI.text('items.spark.desc', ''); info.extra = UI.text('ui.sparks', "Chandler's Sparks") + ':  ' + (p.sparks || []).length + ' / ' + tt.sparks; info.stinger = 'spark'; break;
+      case 'notch': info.name = UI.text('items.notch.name', 'Wax Notch'); info.desc = UI.text('items.notch.desc', ''); info.extra = UI.text('ui.notches', 'Notches') + ':  ' + (p.notches | 0); break;
+      case 'spark': info.name = UI.text('items.spark.name', "Chandler's Spark"); info.desc = UI.text('items.spark.desc', ''); info.extra = UI.text('ui.sparks', "Chandler's Sparks") + ':  ' + (p.sparks || []).length; info.stinger = 'spark'; break;
       case 'seal': {
         info.name = UI.text('items.seal_' + arg + '.name', 'Warden Seal');
         info.desc = UI.text('items.seal_' + arg + '.desc', '');
-        info.extra = UI.fmt(UI.text('ui.sealDoorCount', 'Warden Seals: {n} / 3'), { n: (p.seals || []).length });
+        info.extra = UI.fmt(UI.text('ui.sealsHeld', 'Warden Seals: {n}'), { n: (p.seals || []).length });
         info.stinger = 'seal';
         break;
       }
-      case 'sigil': info.name = UI.text('sigils.' + arg + '.name', arg); info.desc = UI.text('sigils.' + arg + '.desc', ''); info.extra = UI.text('ui.notches', 'Notches') + ':  ' + (UI.sigilCost ? UI.sigilCost(arg) : 1); break;
+      case 'sigil': info.name = UI.text('sigils.' + arg + '.name', arg); info.desc = UI.text('sigils.' + arg + '.desc', ''); info.notches = UI.sigilCost ? UI.sigilCost(arg) : 1; break;
       case 'brand': {
         const lvl = Math.max(0, Math.min(3, p.brandLevel | 0));
-        const bi = UI.brandLevelInfo ? UI.brandLevelInfo(lvl) : { name: 'Brand', desc: '', dmg: 0 };
-        info.name = bi.name; info.desc = bi.desc; info.extra = bi.dmg + ' ' + UI.text('ui.damage', 'damage');
+        const bi = UI.brandLevelInfo ? UI.brandLevelInfo(lvl) : { name: 'Brand', desc: '' };
+        info.name = bi.name; info.desc = bi.desc;
         break;
       }
       case 'chart': info.name = UI.fmt(UI.text('ui.chartOf', 'Chart: {region}'), { region: UI.regionName(arg) }); info.desc = UI.text('items.chart.desc', ''); break;
@@ -338,7 +350,7 @@
         const pw = 660;
         ctx.font = UI.font(20);
         const lines = UI.wrapBalanced(ctx, info.desc, pw - 110);
-        const ph = 238 + lines.length * 28 + (info.extra ? 34 : 0);
+        const ph = 238 + lines.length * 28 + (info.extra || info.notches > 0 ? 34 : 0);
         const px = (W - pw) / 2, py = (H - ph) / 2 - 10;
         const lift = (1 - UI.ease.outCubic(UI.clamp01(this.t / 0.4))) * 16;
         UI.panel(ctx, px, py + lift, pw, ph, { cornerSize: 18, border: 'rgba(170,215,255,0.32)' });
@@ -363,6 +375,17 @@
           ctx.font = UI.font(18, 'italic');
           ctx.fillStyle = info.highlight ? C.gold : C.goldDim;
           ctx.fillText(info.extra, W / 2, py + 238 + lift + lines.length * 28 + 12);
+        } else if (info.notches > 0 && UI.notchCost) {
+          const label = UI.text('ui.notches', 'Notches');
+          ctx.font = UI.font(18, 'italic');
+          const lw = ctx.measureText(label).width, tw = lw + 12 + info.notches * 16;
+          const x0 = W / 2 - tw / 2, y0 = py + 238 + lift + lines.length * 28 + 6;
+          ctx.fillStyle = C.goldDim;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, x0, y0);
+          UI.notchCost(ctx, x0 + lw + 12, y0, info.notches, 'left');
+          ctx.textAlign = 'center';
         }
         const k = UI.clamp01((this.t - 0.7) / 0.4);
         if (k > 0) UI.hints(ctx, [['confirm', UI.text('ui.next', 'Continue')]], W / 2, py + ph + 32, 'center', { alpha: 0.6 * k });

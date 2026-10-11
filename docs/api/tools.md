@@ -9,8 +9,11 @@ Self-test of the tools: `node tools/fixtures/selftest.js` (62 checks).
 node tools/test_all.js [--quick] [--only a,b] [--skip a,b] [--from step] [--list]   # EVERYTHING below + all self-tests
 node tools/audit.js                     # static contracts: index.html scripts, syntax, canvas rules, audio names, text keys
 node tools/e2e.js [--file dist/Gutterlight.html]   # the real boot flow end to end (title … death/wisp … continue)
-node tools/playthrough.js [--from step] [--to step] [--list] [--verbose] [--shots] [--file f]
+node tools/input_check.js [--file f] [--shots]       # control rebinding: real keyboard/mouse events, mocked gamepad, Controls screen, persistence
+node tools/rebind_check.js [--file f]                 # rebinding QA regressions (tools/rebind/*.js): menu fallbacks vs bindings, Alt/Ctrl shortcuts, pad pause, pad capture, Controls notes
+node tools/playthrough.js [--from step] [--to step] [--list] [--verbose] [--shots] [--file f] [--mode standard|easy]
                                         # the WHOLE critical path played in the real game, New Game → both endings (~7 min)
+node tools/modes_check.js [contract] [wisp] [engine] [tele] [leap] [--shots] # difficulty modes regression (see tools/README.md)
 node tools/validate.js [--room gw_03,gw_04] [--dev] [--json] [--quiet] [--complete] [--plan f.json | --no-plan] [--data extra.js [--data-only]]
 node tools/plan_check.js [plan.json] [--verbose | --orders-json]   # world plan check; --orders-json: feasible ability orders as JSON
 node tools/reach.js    [--room gw_03 | --all] [--verbose] [--overlay] [--json] [--jobs N] [--no-cache]

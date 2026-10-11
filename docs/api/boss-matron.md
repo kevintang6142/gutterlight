@@ -108,3 +108,16 @@ stinger, husk, inert re-entry. Contact sheets: `sheet_poses.png`, `sheet_attacks
   `surfaceBelow`, constants) and the instance methods `leap`, `fall`, `arrive`, `swipeZone()`, `perchOptions()`.
 - `buildArena` works in any room (surfaces from the tiles, gates as walls); wall clings are tuned for `sf_05` and fall
   back to the room's inner faces elsewhere.
+
+## Telegraphs by mode (difficulty modes; framework: docs/api/enemies.md §6.1)
+
+Easy draws everything exactly as before. Standard / hardcore hide the explicit markers (draw-time `G.telegraphsOn()`;
+timing identical in all modes) except the documented **kept-subtle** cases (Mark `keep: 'subtle'` → `drawSubtle`).
+
+| attack | easy | standard / hardcore | diegetic tell (all modes) |
+|---|---|---|---|
+| `pounce` | landing seam + brackets + embers + light for the whole flight | removed when she takes off inside the camera view; **kept-subtle** (dim unlit band, no seam / brackets / embers / light) when she takes off outside it — *reason: the leap would otherwise arrive from outside the camera view (wall cling or strand off-screen)* | crouch + hiss 0.58 / 0.5 s (follow-up 0.34 s); the visible near-vertical leap |
+| `ignite` drop | landing mark | same rule as `pounce` | 0.7 s hiss telegraph while she hangs on the strand, visible |
+| `spit` | a landing ring at each spot from the moment it is spat + an ember glow under each ball | rings + glow removed; each ball's soft ground shadow **kept-subtle** (60 % alpha, no glow) — *reason: 3–5 balls are lobbed at once and their arcs can leave the top of the view; without it the safe gap cannot be read* | rears, throat glows + gurgle 0.56 / 0.5 s; the balls visible in flight |
+| `ashfall` | lit lanes with dashed edges + impact bars + vault glow, then a live lane until the clump lands | **kept-subtle**: a soft-edged curtain of dark soot haze for the 0.8 s warning only (no edges, bars, light; no live lane) — *reason: two overlapping waves (the second between the first) fall from chimneys above the view; the safe spots cannot be read otherwise* | rears up fully 0.7 s + `matron_rear`, belly-slam shake; burning embers + soot sift from the top of the view down each lane (framework `dust` cue, colours `[EMBER_HI, soot]`), ash from the vault |
+| `swipe`, `brood`, `skitter`, brood darts | — (no explicit marker) | unchanged | forelegs raised / abdomen swells / crouch; sprite chirp + glint |

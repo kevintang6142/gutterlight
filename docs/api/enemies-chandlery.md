@@ -104,3 +104,26 @@ helm (one slit of furnace light), a leather apron and belt, a molten crucible st
 ladle. Deaths: moldlings splatter (wax burst, spattered puddle, no wick); slimes sizzle into a cooling amber puddle;
 wisps puff out (smoke, embers) and their coal heart drops into a smear of ash; brutes melt into a tallow puddle with the
 ladle and the helm left lying in it. Telegraph glow colour `#ffc070` (wisp flare `#fff0c0`).
+
+## Telegraphs by mode (easy / standard / hardcore)
+
+The difficulty modes (`G.game.difficulty()`; `G.telegraphsOn()` is true only in Easy) change only **explicit** telegraphs: drawn geometry that outlines where or
+when damage lands (floor zones, landing marks, aim/trajectory lines, hitbox previews, danger tints). Those draw only
+while `G.game.telegraphs()` (alias `G.telegraphsOn()` in enemy_base) is true, which means easy mode only. The
+telegraph audit (module tele-enemies) found **no explicit marker on any of these enemies**. Every tell below is
+**diegetic**: the attacker's own wind-up pose, a glow or glint on its body or weapon (`telegraph()` anchors it on the
+body, weapon tip, lantern, bell or pot), its sound cue, the wind-up shake, particles it emits, or projectiles forming on
+it and visible in flight. So all three modes look and play the same, with the same timing. Nothing was removed and
+nothing was kept-subtle. Verified: `test-output/tele-enemies/sheet_chandlery.png` shows easy and standard side by side
+with seeded randomness and 0.00 % pixel difference at every wind-up. The lab self-test passes in all three modes
+(`test-output/tele-enemies/run_all.sh`). **Rule for new attacks:** gate any explicit marker at draw time with
+`G.telegraphsOn()` (or keep it with `keep: true` and document why), and keep a diegetic tell of at least 0.35 s.
+
+| attack | easy | standard / hardcore | diegetic tell (lead time) |
+|---|---|---|---|
+| moldling: belly-flop | no explicit marker | same as easy (nothing to remove) | **wind-up** 0.45 s: crouches, molten light cracks through its skin, mouth gapes, shake |
+| drip_slime (hanging): drop | no explicit marker | same as easy (nothing to remove) | **tremble** 0.50 s: shivers, the droplet under it stretches, gurgle, heavy shake |
+| drip_slime (floor): lunge | no explicit marker | same as easy (nothing to remove) | **rear** 0.45 s: rears up tall, quivering |
+| forge_wisp: dash | no explicit marker | same as easy (nothing to remove) | **flare** 0.50 s: stops and flares white-hot with rays from its own flame, `wisp_flare` |
+| ladle_brute: blob fling | no explicit marker | same as easy (nothing to remove) | **scoop** 0.60 s: reaches over its shoulder into the crucible, the vat flares (glint on the vat); the blobs are visible in flight and their puddles are the hazard itself |
+| ladle_brute: shove | no explicit marker | same as easy (nothing to remove) | **brace** 0.48 s: hunches low behind the bowl, heavy shake |

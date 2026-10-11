@@ -1,5 +1,5 @@
-// src/ui/inventory.js — the Inventory screen (abilities, stats, Brand, relics, completion, Sigil grid with a
-// notch meter; equipping only when opened at a Sconce) and the shared procedural icon set G.UI.icons
+// src/ui/inventory.js — the Inventory screen (owned abilities, stats, Brand, held relics, owned Sigils with a
+// notch meter; equipping only when opened at a Sconce; nothing unfound is ever shown or counted) and the shared procedural icon set G.UI.icons
 // (ability / sigil / item icons, also used by cards and shops).
 (function () {
   'use strict';
@@ -443,16 +443,18 @@
   };
 
   // ================================================================== inventory data
+  // No spoilers (Hollow Knight style): the screen only ever shows what the player has found. Abilities, relic types
+  // and sigils appear once owned (no greyed placeholders, no empty sockets/cells), counts never carry a total
+  // (no "x / 8"), Heartwax shows only the shard toward the next candle (half-filled heart), the Brand only its
+  // current name, and completion % is left to the save-slot cards. No soul/damage numbers either (as in Hollow
+  // Knight): health is a row of candles, Ember is never a number, the Brand has no damage figure, sigil costs are pips.
   function P() { return (G.game && G.game.progress) || null; }
-  function totals() { return Object.assign({ heartwax: 8, urns: 2, kilnGlass: 3, sparks: 6, seals: 3, sigils: 14, notches: 6 }, (G.Items && G.Items.totals) || {}); }
   function brandLevelInfo(lvl) {
     const levels = UI.textObj('items.brand.levels');
     const L = levels && levels[lvl];
-    const dmg = (G.Items && G.Items.brandDamage && G.Items.brandDamage[lvl]) || [5, 9, 13, 17][lvl] || 5;
-    return { name: (L && L.name) || ['Plain Brand', 'Tempered Brand', 'Glass-Edged Brand', 'Heartforged Brand'][lvl] || 'Brand', desc: (L && L.desc) || '', dmg };
+    return { name: (L && L.name) || ['Plain Brand', 'Tempered Brand', 'Glass-Edged Brand', 'Heartforged Brand'][lvl] || 'Brand', desc: (L && L.desc) || '' };
   }
   UI.brandLevelInfo = brandLevelInfo;
-  function kilnFound(p) { return (p.kilnGlass | 0) + ((p.brandLevel | 0) >= 2 ? 1 : 0) + ((p.brandLevel | 0) >= 3 ? 2 : 0); }
   function sigilCost(id) {
     if (G.game && G.game.sigilCost) return G.game.sigilCost(id);
     const s = G.Items && G.Items.sigils && G.Items.sigils[id];
@@ -461,19 +463,56 @@
   UI.sigilCost = sigilCost;
   function notchesUsed() { try { return G.game.notchesUsed(); } catch (e) { return 0; } }
 
-  // cells: {kind, id, x, y, w, h}
-  function buildCells() {
+  /** Ability ids the player owns, in the canonical order. */
+  function ownedAbilities(p) { return abilityIds().filter((id) => !!(p && p.abilities && p.abilities[id])); }
+  /** Relic types the player holds at least one of: heartwax (any shard found), urn, kiln_glass (held), spark, seal. */
+  function ownedRelics(p) {
+    const out = [];
+    if (!p) return out;
+    if ((p.heartShards | 0) > 0) out.push('heartwax');
+    if ((p.urns | 0) > 0) out.push('urn');
+    if ((p.kilnGlass | 0) > 0) out.push('kiln_glass');
+    if ((p.sparks || []).length) out.push('spark');
+    if ((p.seals || []).length) out.push('seal');
+    return out;
+  }
+  /** Owned sigils in the order they were found (like HK's charm list), unknown/duplicate ids dropped. */
+  function ownedSigils(p) {
+    const known = sigilIds();
+    return ((p && p.sigils) || []).filter((id, i, a) => known.indexOf(id) >= 0 && a.indexOf(id) === i);
+  }
+  /** Seal ids held, in the canonical order. */
+  function ownedSeals(p) {
+    const order = (G.Items && G.Items.order && G.Items.order.seals) || ['bell', 'kiln', 'wing'];
+    const held = (p && p.seals) || [];
+    return order.filter((id) => held.indexOf(id) >= 0).concat(held.filter((id) => order.indexOf(id) < 0));
+  }
+  UI.inventoryOwned = (p) => { const q = p || P(); return { abilities: ownedAbilities(q), relics: ownedRelics(q), sigils: ownedSigils(q), seals: ownedSeals(q) }; };
+
+  // Layout of the left column flows with what is owned: abilities (rows of 3, centered; none → no section), the
+  // stats row + Brand, then the relic row (none → no section). cells: {kind, id, x, y, w, h}
+  const AB_W = 150, AB_H = 100, AB_DX = 172, AB_DY = 112, COL_MID = 359;
+  function buildLayout(p) {
     const cells = [];
-    abilityIds().forEach((id, i) => cells.push({ kind: 'ability', id, x: 112 + (i % 3) * 172, y: 186 + Math.floor(i / 3) * 112, w: 150, h: 100 }));
-    const relics = ['heartwax', 'urn', 'kiln_glass', 'spark', 'seal'];
-    relics.forEach((id, i) => cells.push({ kind: 'relic', id, x: 76 + i * 106, y: 536, w: 96, h: 110 }));
-    const ids = sigilIds();
+    const ab = ownedAbilities(p);
+    const abRows = Math.ceil(ab.length / 3);
+    ab.forEach((id, i) => {
+      const row = Math.floor(i / 3), inRow = Math.min(3, ab.length - row * 3), k = i - row * 3;
+      const x0 = COL_MID - (inRow * AB_DX - (AB_DX - AB_W)) / 2;
+      cells.push({ kind: 'ability', id, x: Math.round(x0 + k * AB_DX), y: 186 + row * AB_DY, w: AB_W, h: AB_H });
+    });
+    const statsY = ab.length ? 186 + abRows * AB_DY + 22 : 196;
+    const relicY = statsY + 104;
+    ownedRelics(p).forEach((id, i) => cells.push({ kind: 'relic', id, x: 76 + i * 106, y: relicY, w: 96, h: 110 }));
     const perRow = 7;
-    ids.forEach((id, i) => cells.push({ kind: 'sigil', id, x: 700 + (i % perRow) * 74, y: 248 + Math.floor(i / perRow) * 80, w: 64, h: 70 }));
-    return cells;
+    ownedSigils(p).forEach((id, i) => cells.push({ kind: 'sigil', id, x: 700 + (i % perRow) * 74, y: 248 + Math.floor(i / perRow) * 80, w: 64, h: 70 }));
+    // hasSigils gates the whole Sigil column (header, notch meter, Equipped row, Sconce hint): like Hollow Knight's
+    // Charms pane, the system is not shown at all until the first Sigil is found
+    return { cells, statsY, relicY, hasAbilities: ab.length > 0, hasSigils: ownedSigils(p).length > 0 };
   }
   function navigate(cells, cur, dx, dy) {
     const a = cells[cur];
+    if (!a) return cur;
     const ax = a.x + a.w / 2, ay = a.y + a.h / 2;
     let best = -1, bestScore = Infinity;
     for (let i = 0; i < cells.length; i++) {
@@ -494,18 +533,19 @@
     if (UI.isOpen('inventory')) return UI.find('inventory');
     const o = opts || {};
     const atSconce = !!o.atSconce;
-    const cells = buildCells();
+    const lay = buildLayout(P());
+    const cells = lay.cells;
     const firstSigil = cells.findIndex((c) => c.kind === 'sigil');
     UI.sfx('map_open', { pitch: 1.15 });
     return UI.push({
-      name: 'inventory', fadeIn: 0.2, fadeOut: 0.16, hideHud: true, atSconce, cells,
+      name: 'inventory', fadeIn: 0.2, fadeOut: 0.16, hideHud: true, atSconce, cells, layout: lay,
       sel: atSconce && firstSigil >= 0 ? firstSigil : 0, msg: '', msgT: 0, onClose: o.onClose,
       update(dt, active) {
         if (this.msgT > 0) this.msgT -= dt;
         if (!active) return;
-        if (UI.pressedAny(['inventory', 'cancel', 'pause'])) { UI.sfx('menu_back'); UI.close(this); return; }
+        if (UI.pressedClose(['inventory', 'cancel', 'pause'])) { UI.sfx('menu_back'); UI.close(this); return; }
         const dx = UI.navX(), dy = dx ? 0 : UI.navY();
-        if (dx || dy) {
+        if ((dx || dy) && cells.length) {
           const n = navigate(cells, this.sel, dx, dy);
           if (n !== this.sel) { this.sel = n; UI.sfx('menu_move'); }
         }
@@ -558,44 +598,44 @@
     if (!p) return;
     const sel = s.cells[s.sel];
 
-    // ---- abilities
-    sectionLabel(ctx, UI.text('ui.abilities', 'Abilities'), 80, 150);
+    // ---- abilities (owned only; no section until the first one is found)
+    if (s.layout.hasAbilities) sectionLabel(ctx, UI.text('ui.abilities', 'Abilities'), 80, 150);
     for (const c of s.cells) {
       if (c.kind !== 'ability') continue;
-      const have = !!(p.abilities && p.abilities[c.id]);
       const on = c === sel;
       const cx = c.x + c.w / 2;
       if (on) selectionFrame(ctx, c, t);
-      icons.ability(ctx, c.id, cx, c.y + 34, 54, { dim: !have, t });
+      icons.ability(ctx, c.id, cx, c.y + 34, 54, { t });
       ctx.font = UI.font(17);
-      ctx.fillStyle = have ? (on ? C.creamHi : C.cream) : C.faint;
+      ctx.fillStyle = on ? C.creamHi : C.cream;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(UI.text('abilities.' + c.id + '.name', c.id), cx, c.y + 82);
     }
 
     // ---- stats
-    const sy = 432;
-    UI.rule(ctx, 340, sy - 34, 280, C.cream, 0.25);
+    const sy = s.layout.statsY;
+    if (s.layout.hasAbilities) UI.rule(ctx, 340, sy - 34, 280, C.cream, 0.25);
     const lvl = Math.max(0, Math.min(3, p.brandLevel | 0));
     const bi = brandLevelInfo(lvl);
-    const stats = [
-      ['health', UI.text('ui.health', 'Health'), String(G.game.maxHealth())],
-      ['ember', UI.text('ui.ember', 'Ember'), String(G.game.emberMax())],
-      ['cinders', UI.text('ui.cinders', 'Cinders'), String(p.cinders | 0)],
-    ];
-    stats.forEach(([icon, label, val], i) => {
-      const x = 92 + i * 150;
-      icons.item(ctx, icon, x, sy, 30, { t });
-      ctx.font = UI.font(15);
-      ctx.fillStyle = C.dim;
-      ctx.textAlign = 'left';
-      ctx.fillText(label, x + 24, sy - 9);
-      ctx.font = UI.font(22);
-      ctx.fillStyle = C.cream;
-      ctx.fillText(val, x + 24, sy + 13);
-    });
-    // brand
+    // health: one small candle per candle of health (drawn, never a number); cinders: the purse, as geo is shown
+    const mh = Math.max(1, Math.min(12, G.game.maxHealth() | 0));
+    icons.item(ctx, 'health', 92, sy, 30, { t });
+    ctx.font = UI.font(15);
+    ctx.fillStyle = C.dim;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(UI.text('ui.health', 'Health'), 116, sy - 9);
+    for (let i = 0; i < mh; i++) candlePip(ctx, 122 + i * 13, sy + 13, t + i * 0.37);
+    const cx0 = Math.max(300, 122 + mh * 13 + 36);
+    icons.item(ctx, 'cinders', cx0, sy, 30, { t });
+    ctx.font = UI.font(15);
+    ctx.fillStyle = C.dim;
+    ctx.fillText(UI.text('ui.cinders', 'Cinders'), cx0 + 24, sy - 9);
+    ctx.font = UI.font(22);
+    ctx.fillStyle = C.cream;
+    ctx.fillText(String(p.cinders | 0), cx0 + 24, sy + 13);
+    // brand: its current name only (no level, no damage)
     const bx = 92, by = sy + 46;
     icons.item(ctx, 'brand', bx, by, 30, { t });
     ctx.font = UI.font(20);
@@ -603,94 +643,77 @@
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(bi.name, bx + 24, by + 1);
-    const bw = ctx.measureText(bi.name).width;
-    ctx.font = UI.font(16, 'italic');
-    ctx.fillStyle = C.dim;
-    ctx.fillText(UI.text('ui.brand', 'Brand') + ' ' + lvl + ' / 3  ·  ' + bi.dmg + ' ' + UI.text('ui.damage', 'damage'), bx + 34 + bw, by + 2);
 
-    // ---- relics
-    sectionLabel(ctx, UI.text('ui.relics', 'Relics'), 80, 522);
-    const tt = totals();
+    // ---- relics (only types held; counts without totals)
+    let relics = 0;
     for (const c of s.cells) {
       if (c.kind !== 'relic') continue;
+      relics++;
       const on = c === sel;
       if (on) selectionFrame(ctx, c, t);
       const cx = c.x + c.w / 2, iy = c.y + 40;
-      let count = '', have = false;
+      let count = '';
       switch (c.id) {
         case 'heartwax': {
-          have = (p.heartShards | 0) > 0;
-          icons.item(ctx, 'heartwax', cx, iy, 40, { dim: !have, t, half: (p.heartShards | 0) % 2 === 1 });
-          count = (p.heartShards | 0) + ' / ' + tt.heartwax;
+          // the shard toward the next candle, as HK shows mask shards: half a heart, or an empty outline
+          const loose = (p.heartShards | 0) % 2;
+          icons.item(ctx, 'heartwax', cx, iy, 40, { t, half: loose === 1, dim: loose === 0 });
           break;
         }
-        case 'urn': have = (p.urns | 0) > 0; icons.item(ctx, 'urn', cx, iy, 40, { dim: !have, t }); count = (p.urns | 0) + ' / ' + tt.urns; break;
-        case 'kiln_glass': { const f = kilnFound(p); have = f > 0; icons.item(ctx, 'kiln_glass', cx, iy, 38, { dim: !have, t }); count = (p.kilnGlass | 0) + ''; break; }
-        case 'spark': {
-          const n = (p.sparks || []).length;
-          have = n > 0;
-          icons.item(ctx, 'spark', cx, iy - 4, 34, { dim: !have, t });
-          for (let k = 0; k < tt.sparks; k++) {
-            const lit = k < n;
-            const dx = cx - (tt.sparks - 1) * 6 + k * 12;
-            ctx.fillStyle = lit ? '#bfe8ff' : 'rgba(236,228,207,0.18)';
-            ctx.beginPath(); ctx.arc(dx, iy + 22, 2.6, 0, TAU); ctx.fill();
-            if (lit) UI.glow(ctx, dx, iy + 22, 8, '#6fb8ff', 0.5);
-          }
-          count = n + ' / ' + tt.sparks;
+        case 'urn': {
+          // one urn per urn held, never a count (HK shows soul vessels as pictures, not numbers)
+          const n = Math.max(1, Math.min(4, p.urns | 0)), sz = n > 2 ? 26 : n > 1 ? 32 : 40, dx = n > 2 ? 26 : 32;
+          for (let k = 0; k < n; k++) icons.item(ctx, 'urn', cx - (n - 1) * dx / 2 + k * dx, iy, sz, { t });
           break;
         }
+        case 'kiln_glass': icons.item(ctx, 'kiln_glass', cx, iy, 38, { t }); count = String(p.kilnGlass | 0); break;
+        case 'spark': icons.item(ctx, 'spark', cx, iy, 34, { t }); count = String((p.sparks || []).length); break;
         case 'seal': {
-          const seals = p.seals || [];
-          have = seals.length > 0;
-          const ids = (G.Items && G.Items.order && G.Items.order.seals) || ['bell', 'kiln', 'wing'];
-          ids.forEach((sid, k) => icons.item(ctx, 'seal_' + sid, cx - 26 + k * 26, iy, 24, { dim: seals.indexOf(sid) < 0, t }));
-          count = seals.length + ' / ' + tt.seals;
+          const ids = ownedSeals(p);
+          const n = ids.length, sz = n > 2 ? 24 : 30, dx = n > 2 ? 26 : 32;
+          ids.forEach((sid, k) => icons.item(ctx, 'seal_' + sid, cx - (n - 1) * dx / 2 + k * dx, iy, sz, { t }));
           break;
         }
       }
+      if (!count) continue;
       ctx.font = UI.font(17);
-      ctx.fillStyle = have ? (on ? C.creamHi : C.cream) : C.faint;
+      ctx.fillStyle = on ? C.creamHi : C.cream;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(count, cx, c.y + 90);
     }
-    // completion
-    ctx.font = UI.font(19, 'italic');
-    ctx.fillStyle = C.goldDim;
-    ctx.textAlign = 'left';
-    ctx.fillText(UI.text('ui.completion', 'Completion') + '  ' + G.game.completion() + '%', 80, 672);
+    if (relics) sectionLabel(ctx, UI.text('ui.relics', 'Relics'), 80, s.layout.relicY - 14);
 
-    // ---- sigils
-    sectionLabel(ctx, UI.text('ui.sigils', 'Sigils'), 700, 150);
-    drawNotchMeter(ctx, p, 1198, 150, t);
-    // equipped row
-    ctx.font = UI.font(15, 'italic');
-    ctx.fillStyle = C.dim;
-    ctx.textAlign = 'left';
-    ctx.fillText(UI.text('ui.equipped', 'Equipped'), 700, 192);
-    const eq = p.equipped || [];
-    if (!eq.length) {
-      ctx.fillStyle = C.faint;
-      ctx.fillText('—', 790, 192);
+    // ---- sigils (owned only; no header, notch meter, Equipped row or Sconce hint until the first one is found)
+    const hasSigils = !!s.layout.hasSigils;
+    if (hasSigils) {
+      sectionLabel(ctx, UI.text('ui.sigils', 'Sigils'), 700, 150);
+      drawNotchMeter(ctx, p, 1198, 150, t);
+      // equipped row
+      ctx.font = UI.font(15, 'italic');
+      ctx.fillStyle = C.dim;
+      ctx.textAlign = 'left';
+      ctx.fillText(UI.text('ui.equipped', 'Equipped'), 700, 192);
+      const eq = p.equipped || [];
+      if (!eq.length) {
+        ctx.fillStyle = C.faint;
+        ctx.fillText('—', 790, 192);
+      }
+      eq.forEach((id, i) => icons.sigil(ctx, id, 800 + i * 44, 192, 34, { t, equipped: false }));
+      UI.rule(ctx, 925, 220, 240, C.cream, 0.2);
     }
-    eq.forEach((id, i) => icons.sigil(ctx, id, 800 + i * 44, 192, 34, { t, equipped: false }));
-    UI.rule(ctx, 925, 220, 240, C.cream, 0.2);
     for (const c of s.cells) {
       if (c.kind !== 'sigil') continue;
-      const owned = p.sigils.indexOf(c.id) >= 0;
       const on = c === sel;
       const cx = c.x + c.w / 2, cy = c.y + c.h / 2 - 4;
       if (on) selectionFrame(ctx, c, t);
-      if (owned) {
-        icons.sigil(ctx, c.id, cx, cy, 52, { t, equipped: G.game.isEquipped(c.id) });
-        // cost pips
-        const cost = sigilCost(c.id);
-        for (let k = 0; k < cost; k++) {
-          ctx.fillStyle = C.creamDim;
-          ctx.beginPath(); ctx.arc(cx - (cost - 1) * 4 + k * 8, c.y + c.h + 1, 2.1, 0, TAU); ctx.fill();
-        }
-      } else icons.sigil(ctx, c.id, cx, cy, 52, { empty: true });
+      icons.sigil(ctx, c.id, cx, cy, 52, { t, equipped: G.game.isEquipped(c.id) });
+      // cost pips
+      const cost = sigilCost(c.id);
+      for (let k = 0; k < cost; k++) {
+        ctx.fillStyle = C.creamDim;
+        ctx.beginPath(); ctx.arc(cx - (cost - 1) * 4 + k * 8, c.y + c.h + 1, 2.1, 0, TAU); ctx.fill();
+      }
     }
 
     // ---- description panel
@@ -703,7 +726,7 @@
     }
     hints.push(['cancel', UI.text('ui.close', 'Close')]);
     UI.hints(ctx, hints, W - 70, 672, 'right', { alpha: 0.6, size: 16 });
-    if (!s.atSconce && !(s.msgT > 0 && s.msg)) {
+    if (hasSigils && !s.atSconce && !(s.msgT > 0 && s.msg)) {
       ctx.font = UI.font(16, 'italic');
       ctx.fillStyle = C.dim;
       ctx.textAlign = 'center';
@@ -732,7 +755,8 @@
     ctx.fillStyle = C.creamDim;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    const label = UI.fmt(UI.text('ui.notchesUsed', 'Notches: {used} / {total}'), { used, total });
+    // the label carries no numbers: owned notches are the pips (filled = in use), never "used / max"
+    const label = UI.text('ui.notches', 'Notches');
     const pipsW = total * 18;
     ctx.fillText(label, rx - pipsW - 10, y + 1);
     for (let i = 0; i < total; i++) {
@@ -744,49 +768,71 @@
     }
   }
 
+  /** A small lit candle (health, drawn instead of a number). */
+  function candlePip(ctx, x, y, t) {
+    ctx.fillStyle = '#e9e1cc';
+    ctx.fillRect(x - 3, y - 4, 6, 12);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(x + 1, y - 4, 2, 12);
+    const fl = 1 + 0.12 * Math.sin(t * 9);
+    UI.glow(ctx, x, y - 8, 8, '#79c4ff', 0.35);
+    ctx.fillStyle = '#9fd4ff';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 13 * fl); ctx.quadraticCurveTo(x + 3.2, y - 7, x, y - 5); ctx.quadraticCurveTo(x - 3.2, y - 7, x, y - 13 * fl);
+    ctx.fill();
+  }
+  /** A sigil's notch cost as diamond pips (as on the notch meter), never a number. Returns the right edge
+   *  (align 'left': pips start at x; 'center': centered on x). */
+  function notchCost(ctx, x, y, n, align) {
+    const k = Math.max(0, n | 0), step = 16, wTot = k * step;
+    const x0 = align === 'center' ? x - wTot / 2 : x;
+    for (let i = 0; i < k; i++) {
+      const px = x0 + step / 2 + i * step;
+      ctx.beginPath();
+      ctx.moveTo(px, y - 7); ctx.lineTo(px + 5, y); ctx.lineTo(px, y + 7); ctx.lineTo(px - 5, y); ctx.closePath();
+      ctx.fillStyle = '#bfe6ff';
+      ctx.fill();
+    }
+    return x0 + wTot;
+  }
+  UI.notchCost = notchCost;
+
   function drawDescription(ctx, s, c, p, t) {
     const x = 690, y = 420, w = 500, h = 190;
     UI.panel(ctx, x, y, w, h, { corners: true, cornerSize: 12, cornerAlpha: 0.4, fill: 'rgba(10,11,17,0.75)' });
     if (!c) return;
-    let name = '', desc = '', meta = '', dimName = false;
+    let name = '', desc = '', meta = '', pips = 0;
+    // cells exist only for owned things, so every entry here has its real name and description
     if (c.kind === 'ability') {
-      const have = !!p.abilities[c.id];
       name = UI.text('abilities.' + c.id + '.name', c.id);
-      desc = have ? UI.text('abilities.' + c.id + '.desc', '') : UI.text('ui.notFound', 'Not yet found');
-      dimName = !have;
-      if (have) meta = UI.tokens(UI.text('abilities.' + c.id + '.how', ''));
+      desc = UI.text('abilities.' + c.id + '.desc', '');
+      meta = UI.tokens(UI.text('abilities.' + c.id + '.how', ''));
     } else if (c.kind === 'relic') {
-      const tt = totals();
       switch (c.id) {
-        case 'heartwax':
+        case 'heartwax': {
           name = UI.text('items.heartwax.name', 'Heartwax Shard');
           desc = UI.text('items.heartwax.desc', '');
-          meta = UI.text('ui.heartShards', 'Heartwax Shards') + ': ' + (p.heartShards | 0) + ' / ' + tt.heartwax + '   ·   ' + ((p.heartShards | 0) % 2) + ' / 2';
+          meta = (p.heartShards | 0) % 2 ? UI.text('ui.heartwaxHalf', 'Half of a new candle. One more shard will complete it.')
+            : UI.text('ui.heartwaxNone', 'No loose shards: every pair has fused into a candle.');
           break;
-        case 'urn': name = UI.text('items.urn.name', 'Ember Urn'); desc = UI.text('items.urn.desc', ''); meta = UI.text('ui.urns', 'Ember Urns') + ': ' + (p.urns | 0) + ' / ' + tt.urns; break;
-        case 'kiln_glass': name = UI.text('items.kiln_glass.name', 'Kiln Glass'); desc = UI.text('items.kiln_glass.desc', ''); meta = UI.text('ui.kilnGlass', 'Kiln Glass') + ': ' + (p.kilnGlass | 0) + '   ·   ' + kilnFound(p) + ' / ' + tt.kilnGlass; break;
-        case 'spark': name = UI.text('items.spark.name', "Chandler's Spark"); desc = UI.text('items.spark.desc', ''); meta = UI.text('ui.sparks', "Chandler's Sparks") + ': ' + (p.sparks || []).length + ' / ' + tt.sparks; break;
+        }
+        case 'urn': name = UI.text('items.urn.name', 'Ember Urn'); desc = UI.text('items.urn.desc', ''); break;   // no count: items.urn.desc says it in words
+        case 'kiln_glass': name = UI.text('items.kiln_glass.name', 'Kiln Glass'); desc = UI.text('items.kiln_glass.desc', ''); meta = UI.text('ui.kilnGlass', 'Kiln Glass') + ': ' + (p.kilnGlass | 0); break;
+        case 'spark': name = UI.text('items.spark.name', "Chandler's Spark"); desc = UI.text('items.spark.desc', ''); meta = UI.text('ui.sparks', "Chandler's Sparks") + ': ' + (p.sparks || []).length; break;
         case 'seal': {
           name = UI.text('ui.seals', 'Warden Seals');
-          const seals = p.seals || [];
-          desc = seals.length ? seals.map((id) => UI.text('items.seal_' + id + '.name', id)).join(',  ') : UI.text('ui.notFound', 'Not yet found');
-          meta = UI.text('ui.seals', 'Warden Seals') + ': ' + seals.length + ' / ' + tt.seals;
+          desc = ownedSeals(p).map((id) => UI.text('items.seal_' + id + '.name', id)).join(',  ');
           break;
         }
       }
-      const owned = c.id === 'seal' ? (p.seals || []).length : c.id === 'spark' ? (p.sparks || []).length : c.id === 'heartwax' ? p.heartShards : c.id === 'urn' ? p.urns : kilnFound(p);
-      if (!owned) { dimName = true; if (c.id !== 'seal') desc = UI.text('ui.notFound', 'Not yet found'); }
     } else if (c.kind === 'sigil') {
-      const owned = p.sigils.indexOf(c.id) >= 0;
-      if (!owned) { name = UI.text('ui.unknown', '???'); desc = UI.text('ui.notFound', 'Not yet found'); dimName = true; } else {
-        name = UI.text('sigils.' + c.id + '.name', c.id);
-        desc = UI.text('sigils.' + c.id + '.desc', '');
-        const cost = sigilCost(c.id);
-        meta = UI.text('ui.notches', 'Notches') + ': ' + cost + (G.game.isEquipped(c.id) ? '   ·   ' + UI.text('ui.equipped', 'Equipped') : '');
-      }
+      name = UI.text('sigils.' + c.id + '.name', c.id);
+      desc = UI.text('sigils.' + c.id + '.desc', '');
+      pips = sigilCost(c.id);
+      if (G.game.isEquipped(c.id)) meta = UI.text('ui.equipped', 'Equipped');
     }
     ctx.font = UI.font(25);
-    ctx.fillStyle = dimName ? C.dim : C.cream;
+    ctx.fillStyle = C.cream;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(name, x + 26, y + 42);
@@ -795,12 +841,25 @@
     const lines = UI.wrap(ctx, desc, w - 52);
     const maxLines = 4;
     for (let i = 0; i < Math.min(maxLines, lines.length); i++) ctx.fillText(lines[i], x + 26, y + 74 + i * 23);
+    let mx = x + 26;
+    if (pips > 0) {
+      // the cost as pips after a dim 'Notches' label (no number)
+      ctx.font = UI.font(15, 'italic');
+      ctx.fillStyle = C.goldDim;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const label = UI.text('ui.notches', 'Notches');
+      ctx.fillText(label, x + 26, y + h - 25);
+      mx = notchCost(ctx, x + 26 + ctx.measureText(label).width + 10, y + h - 25, pips, 'left') + 18;
+      ctx.textBaseline = 'alphabetic';
+    }
     if (meta) {
       ctx.font = UI.font(15, 'italic');
       ctx.fillStyle = C.goldDim;
-      const ml = UI.wrap(ctx, meta, w - 52);
+      ctx.textAlign = 'left';
+      const ml = UI.wrap(ctx, meta, x + w - 26 - mx);
       const my = y + h - 20 - (ml.length - 1) * 19;
-      for (let i = 0; i < ml.length; i++) ctx.fillText(ml[i], x + 26, my + i * 19);
+      for (let i = 0; i < ml.length; i++) ctx.fillText(ml[i], mx, my + i * 19);
     }
     if (s.msgT > 0 && s.msg) {
       ctx.globalAlpha *= Math.min(1, s.msgT / 0.4);

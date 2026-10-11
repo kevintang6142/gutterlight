@@ -158,7 +158,13 @@ G.input.label(action)       // e.g. 'Z' or 'A' — for on-screen prompts, based 
 G.input.setVirtual(state)   // test injection: {left:true, jump:true, ...} merged into real input
 G.input.clearVirtual()
 ```
-Keyboard map (both sets simultaneously): left ←/A, right →/D, up ↑/W, down ↓/S, jump Z/Space,
+**Bindings are rebindable** (Controls screen, `src/ui/menus.js`): each gameplay action has two keyboard/mouse
+slots and one gamepad slot, stored as typed ids (`'key:KeyZ'`, `'mouse:0'`, `'pad:2'`, `'axis:0-'`) and persisted
+in `G.settings.bindings` (shared by all slots, validated on load). `G.input.label(action)` follows the current
+bindings (mouse counts as keyboard). Lockout fallbacks: Escape always pauses/backs out; Enter/NumpadEnter/pad A
+always confirm and Escape/Backspace/pad B always cancel; arrows/D-pad/left stick always navigate menus. Full API
+(setBinding/clearBinding/resetBindings/beginCapture, the confirm/cancel rule, mouse handling): docs/api/engine.md §3.
+The DEFAULT keyboard map (both sets simultaneously): left ←/A, right →/D, up ↑/W, down ↓/S, jump Z/Space,
 attack X/J, dash C/K/Shift, spell V/L, interact = up, map Tab/M, inventory I, pause Esc/P,
 confirm Enter/Z/Space/J, cancel Esc/X/Backspace. `Tab` must `preventDefault`.
 Gamepad (standard mapping): stick/D-pad move (deadzone 0.35), A(0) jump+confirm, B(1) spell+cancel,
@@ -431,15 +437,20 @@ Ember gain: +11 per *nail* hit that connects on an enemy (`ember_thirst` +6). Sp
   bosses: {},                        // bossId → true
   flags: {},                         // 'item:<id>', 'broken:<comp>', 'lever:<id>', 'talked:<npc>:<id>', custom
   visited: {}, charts: {}, lanterns: {},
-  wisp: null,                        // { room, x, y, cinders }
+  wisp: null,                        // { room, x, y, cinders }; G.wispSpotFor may move it out of an unbeaten boss's arena
+  mode: 'standard',                  // difficulty: 'easy' | 'standard' | 'hardcore' (missing/invalid → 'easy': pre-modes saves)
+  broken: false,                     // hardcore only: the run ended in death (set + saved at the instant of death)
+  diedIn: null,                      // hardcore only: room id of that death (shown on the snuffed slot card)
 }
 ```
 
 ### 11.2 API
 ```js
-G.game.mode               // 'boot'|'title'|'play'|'transition'|'dead'|'ending'
+G.game.mode               // 'boot'|'title'|'play'|'transition'|'dead'|'ending'|'gameover' (engine state, NOT the difficulty)
+G.game.difficulty()       // 'easy'|'standard'|'hardcore' (alias runMode()); telegraphs() → true only in easy;
+                          // isHardcore(), isBroken(). Draw code uses G.telegraphsOn() (enemy_base.js). See docs/api/engine.md §14.1
 G.game.progress, G.game.room, G.game.player, G.game.region (region object), G.game.t (seconds)
-G.game.newGame(slot), continueGame(slot), quitToTitle(), saveNow()
+G.game.newGame(slot, mode), continueGame(slot) (refuses a broken hardcore slot), quitToTitle(), saveNow()
 G.game.enterRoom(roomId, place)   // place: {tx,ty} | {x,y} (px) | {sconce:id} | {lanternway:id}
 G.game.hitstop(sec), flash(color, sec), shake(px, sec)   // shake respects settings
 G.game.fade(toAlpha, sec, onDone)  // full-screen black fade overlay (0 = clear, 1 = black)

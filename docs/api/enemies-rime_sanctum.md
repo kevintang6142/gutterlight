@@ -127,3 +127,29 @@ node test-output/enemies-rime_sanctum/ingame.js   # in-game telegraph/attack mom
     up to ~1.5 tiles beyond the box.
   - Deaths: the husk and the crawler melt into puddles. The spitter shatters (wall and ceiling spitters break off and
     fall first). The wraith unravels upward into frost smoke with drifting motes and leaves no puddle.
+
+## Telegraphs by mode (easy / standard / hardcore)
+
+The difficulty modes (`G.game.difficulty()`; `G.telegraphsOn()` is true only in Easy) change only **explicit** telegraphs: drawn geometry that outlines where or
+when damage lands (floor zones, landing marks, aim/trajectory lines, hitbox previews, danger tints). Those draw only
+while `G.game.telegraphs()` (alias `G.telegraphsOn()` in enemy_base) is true, which means easy mode only. The
+telegraph audit (module tele-enemies) found **no explicit marker on any of these enemies**. Every tell below is
+**diegetic**: the attacker's own wind-up pose, a glow or glint on its body or weapon (`telegraph()` anchors it on the
+body, weapon tip, lantern, bell or pot), its sound cue, the wind-up shake, particles it emits, or projectiles forming on
+it and visible in flight. So all three modes look and play the same, with the same timing. Nothing was removed and
+nothing was kept-subtle. Verified: `test-output/tele-enemies/sheet_rime_sanctum.png` shows easy and standard side by side
+with seeded randomness and 0.00 % pixel difference at every wind-up. The lab self-test passes in all three modes
+(`test-output/tele-enemies/run_all.sh`). **Rule for new attacks:** gate any explicit marker at draw time with
+`G.telegraphsOn()` (or keep it with `keep: true` and document why), and keep a diegetic tell of at least 0.35 s.
+
+| attack | easy | standard / hardcore | diegetic tell (lead time) |
+|---|---|---|---|
+| frost_husk: fist slam + spike line | no explicit marker | same as easy (nothing to remove) | **raise** 0.60 s: both fists heaved overhead (glint on the fist), `husk_groan`, eyes warm; the spikes are visible as they run |
+| ice_spitter: icicles | no explicit marker | same as easy (nothing to remove) | **aim** 0.70 s: the crystal (its own weapon) tracks and then locks; light fills its core, glint at the tip, `spitter_charge` |
+| rime_wraith: blink slash | no explicit marker | same as easy (nothing to remove) | **shimmer** 0.60 s: frost motes spiral in and the wraith's own outline forms with talons raised, `wraith_shimmer` (see the note below) |
+| shard_crawler: shard fan | no explicit marker | same as easy (nothing to remove) | **bristle** 0.55 s: stops, the shards on its back rise and glow, the body shivers, `crawler_bristle` |
+
+Rime wraith shimmer: this is the wraith materialising. The glow, the motes and the forming outline are its own body
+and particles, so they count as diegetic. It is not a hitbox preview: the slash lands in front of the outline and is
+never drawn ahead of time. Even on a strict reading it would be kept on purpose. The wraith is invisible and
+intangible before it strikes, so with this tell gone the strike would come from a hazard with no visible source.

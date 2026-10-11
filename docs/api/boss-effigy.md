@@ -97,3 +97,28 @@ remains, inert re-entry. Contact sheets: `sheet_poses.png`, `sheet_attacks.png`.
 - `G.Text.bosses.effigy` has only `name`/`sub` (no `intro`/`defeat` lines): the statue is silent by design;
   if the text owner adds lines, `G.Boss` shows them automatically (intro after the wake slam).
 - Tests can drive it with `G.Effigy.POSES`, `G.Effigy.drawEffigy(ctx, pose, null, opts)`, `G.Effigy.drawRemains`.
+
+## Telegraphs by mode (difficulty modes; framework: docs/api/enemies.md §6.1)
+
+Easy draws everything exactly as before. Standard / hardcore hide every explicit marker (checked at draw time via
+`G.telegraphsOn()`; gameplay timing is identical in all modes). The hall's vault is always in view vertically, but
+the hall (2560 px) is twice the camera width and the fight has no camera lean, so the statue can crouch and take off
+outside the view. One kept exception follows from that:
+
+- **Kept (subtle): `leap` landing mark when the statue takes off off-screen.** If the boss is not inside the view
+  (`G.camera.visible(x, y, w, h, -40)` false) at takeoff, `atk_leap` passes `{ keep: 'subtle', cue: 'cracks' }` to
+  `markFloor`: the framework draws a dim, outline-free band at the landing spot (no seam, no brackets; `drawMarks`
+  still draws the seam in easy only), the floor cracks/crumbs cue plays there with a faint rumble, and a dimmed light
+  (0.4x) pools on it. Reason: the opening leap is usually launched from off-screen (forced first attack when the
+  player is > 300 px away, weighted 4 beyond 380 px), and the statue is only in view for ~0.43–0.55 s before it
+  lands on a 160 px box centred on the player, which is too late to read at the first boss. With the kept mark the
+  landing spot shows ~0.73–0.78 s before impact (measured: test-output/modes-fix-boss-effigy/leapmark.js). Taking
+  off in view, the crouch + the visible jump are the tell and no mark is drawn (same rule as the Matron's pounce).
+
+| attack | easy | standard / hardcore | diegetic tell (all modes) |
+|---|---|---|---|
+| `slam` | floor mark under the hammer head (glowing seam, cracks, edge brackets, light) | removed | hammer hauled overhead 0.7 / 0.62 s (follow-up 0.5 s), glow + light on the hammer head, `effigy_raise`, body shake |
+| `leap` | landing mark during the flight | removed when it takes off in view; **kept subtle** (dim band + `cracks` cue + dim light) when it takes off outside the view (see above) | crouch 0.62 / 0.52 s (follow-up 0.45 s) + `effigy_grind` (panned); the leap itself (apex 170–215 px, vertically in view), jump sfx + dust |
+| `combo` (chop) | floor mark under the chop | removed | the visible sweep, then the follow-through up and over (0.42 / 0.36 s chop wind-up, combo follow-up rule) |
+| `debris` | lit lanes, glowing vault cracks, floor seam, lane light, the falling rock's floor shadow | removed (all of it) | roar + stamp + `effigy_crack`; a dust burst at the vault; framework `dust` cue: pebbles + dust trickle from the vault down each column for the whole 0.8 s; dark (unlit) cracks spread in the vault over each column; the rocks are visible falling |
+| `hurl`, `awaken` | — (no explicit marker) | unchanged | wind-up pose + glint; the hammer is visible in flight |

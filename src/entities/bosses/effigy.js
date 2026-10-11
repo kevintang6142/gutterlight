@@ -24,6 +24,8 @@
   const ease = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
   const outQ = (t) => { t = clamp(t, 0, 1); return t * (2 - t); };
   const inQ = (t) => { t = clamp(t, 0, 1); return t * t; };
+  /** Explicit telegraphs (floor seams, lit lanes, rock shadows) draw only in easy (docs/api/boss-effigy.md). */
+  const teleOn = () => (G.telegraphsOn ? G.telegraphsOn() : true);
 
   // ---------------------------------------------------------------------------------------------------------
   // Palette & geometry (facing-space: origin at the feet centre, +x = facing direction, y up is negative)
@@ -700,7 +702,7 @@
       const r = this.r;
       // its shadow on the floor keeps marking the spot after the warning column is gone
       const fy = this.owner && this.owner.feetY;
-      if (fy && fy > this.cy) {
+      if (fy && fy > this.cy && teleOn()) {
         const k = clamp(1 - (fy - this.cy) / 480, 0.15, 1);
         ctx.fillStyle = 'rgba(10,8,12,' + (0.25 + 0.4 * k).toFixed(3) + ')';
         ctx.beginPath(); ctx.ellipse(this.cx, fy - 1, r * (0.7 + 0.7 * k), 3 + 3 * k, 0, 0, TAU); ctx.fill();
@@ -1075,7 +1077,11 @@
           const apex = clamp(150 + dist * 0.1, 170, 215);     // high enough to run under (and never into the vault)
           const sol = this.leapTo(tx, this.feetY, apex, { maxVx: 1500 });
           d.land = this.clampX(this.cx + sol.vx * sol.t, 14);
-          this.markFloor(d.land, this.w + 70, Math.max(0.45, sol.t));
+          // KEPT (subtle) in standard / hardcore when the statue takes off outside the camera view (the hall is 2x the
+          // view and the opening leap often starts off-screen): a dim band + floor cracks so the landing never comes
+          // from nowhere. Taking off in view, the crouch + the visible leap are the tell (no mark) — same rule as Matron.
+          const seen = !G.camera || typeof G.camera.visible !== 'function' || G.camera.visible(this.x, this.y, this.w, this.h, -40);
+          this.markFloor(d.land, this.w + 70, Math.max(0.45, sol.t), seen ? null : { keep: 'subtle', cue: 'cracks' });
           d.jumped = true; d.jt = t;
           G.sfxAt('effigy_swing', this.cx, { pitch: 0.7 });
           G.sfxAt('jump', this.cx, { pitch: 0.45, vol: 1.2 });
@@ -1347,8 +1353,11 @@
       if (!this.room) return null;
       return G.spawnProjectile(this.room, 'effigy_wave', { x, y: this.feetY, dir, speed, owner: this });
     }
-    markFloor(x, w, dur) {
-      const z = this.warnZone({ x: x - w / 2, y: this.feetY - 26, w, h: 26, dur: Math.max(0.3, dur), style: 'floor', color: '#ffcf8a' });
+    markFloor(x, w, dur, o) {
+      // standard: no cue — the raised hammer / the visible leap is the tell (cue 'none'); o ({keep, cue}) overrides
+      // that for the off-screen leap (kept subtle, see atk_leap)
+      const z = this.warnZone({ x: x - w / 2, y: this.feetY - 26, w, h: 26, dur: Math.max(0.3, dur), style: 'floor', color: '#ffcf8a',
+        cue: (o && o.cue) || 'none', keep: (o && o.keep) || false });
       if (z) { (this.marks || (this.marks = [])).push(z); z.seedX = Math.random() * 10; }
       return z;
     }
@@ -1361,6 +1370,7 @@
     }
     /** The impact spot glows and cracks open under the coming blow (on top of the framework's floor zone). */
     drawMarks(ctx, t) {
+      if (!teleOn()) return;
       const marks = this.liveMarks();
       if (!marks.length) return;
       ctx.save();
@@ -1373,6 +1383,7 @@
     drawColumns(ctx, t) {
       const cols = this.columns;
       if (!cols || !cols.length) return;
+      if (!teleOn()) { this.drawVaultCracks(ctx, cols); return; }
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       for (const z of cols) {
@@ -1399,6 +1410,22 @@
       }
       ctx.restore();
       void t;
+    }
+    /** Standard / hardcore: only the vault cracking where each rock comes loose (dark, unlit — a natural precursor;
+     *  the framework's 'dust' cue trickles pebbles down the column). No lane, no floor seam. */
+    drawVaultCracks(ctx, cols) {
+      ctx.save();
+      ctx.lineWidth = 2; ctx.lineCap = 'round';
+      for (const z of cols) {
+        if (z.dead || z.room !== this.room) continue;
+        const k = clamp(z.age / z.dur, 0, 1), top = z.y, cx = z.x + z.w / 2;
+        ctx.strokeStyle = 'rgba(14,12,16,' + (0.45 + 0.45 * k).toFixed(3) + ')';
+        ctx.beginPath();
+        ctx.moveTo(cx - 18, top + 2); ctx.lineTo(cx - 6, top + 9); ctx.lineTo(cx + 3, top + 4); ctx.lineTo(cx + 16, top + 11);
+        ctx.moveTo(cx - 2, top + 6); ctx.lineTo(cx - 4, top + 16 + 8 * k);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
     /** A glowing floor seam with cracks and edge brackets across zone z at floor y fy (ctx in 'lighter'). */
     drawSeam(ctx, z, fy) {
@@ -1451,8 +1478,8 @@
       if (p.open > 0.1) { const c = this.wpt(6, -100); G.lighting.add({ x: c.x, y: c.y, r: 120, color: CORE, intensity: 0.5 * p.open }); }
       if (this.tele01 > 0.05 && p.held) { const h = this.headWorld(p); G.lighting.add({ x: h.x, y: h.y, r: 120, color: TELE, intensity: 0.45 * this.tele01 }); }
       if (this.hammer) G.lighting.add({ x: this.hammer.x, y: this.hammer.y, r: 110, color: TELE, intensity: 0.35 });
-      for (const z of this.liveMarks()) G.lighting.add({ x: z.x + z.w / 2, y: z.y + z.h - 20, r: z.w * 0.6 + 60, color: TELE, intensity: 0.25 + 0.3 * clamp(z.age / z.dur, 0, 1) });
-      if (this.columns) for (const z of this.columns) if (!z.dead) G.lighting.add({ x: z.x + z.w / 2, y: z.y + z.h - 24, r: 90, color: TELE, intensity: 0.2 + 0.25 * clamp(z.age / z.dur, 0, 1) });
+      { const on = teleOn(); for (const z of this.liveMarks()) if (on || z.keep) G.lighting.add({ x: z.x + z.w / 2, y: z.y + z.h - 20, r: z.w * 0.6 + 60, color: TELE, intensity: (on ? 1 : 0.4) * (0.25 + 0.3 * clamp(z.age / z.dur, 0, 1)) }); }
+      if (this.columns && teleOn()) for (const z of this.columns) if (!z.dead) G.lighting.add({ x: z.x + z.w / 2, y: z.y + z.h - 24, r: 90, color: TELE, intensity: 0.2 + 0.25 * clamp(z.age / z.dur, 0, 1) });
       if (this.cracked && G.fx && Math.random() < dt * 3) { const c = this.wpt(rnd(-30, 30), -rnd(50, 140)); G.fx.burst('smoke', c.x, c.y, { count: 1, color: PALL, alpha: 0.3, size: 8, vy: -40 }); }
     }
 

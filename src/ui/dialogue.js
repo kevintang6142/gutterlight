@@ -94,7 +94,8 @@
       // first draw (an early press must complete the page, not skip it)
       relayout(ctx) {
         const page = pages[this.page] || '';
-        const dev = G.input && G.input.lastDevice;
+        // key caps follow the last-used device and the current bindings (labelsVersion bumps on every rebind)
+        const dev = (G.input && G.input.lastDevice) + '|' + ((G.input && G.input.labelsVersion) || 0);
         if (this.layoutPage === this.page && this.layout && this.layout._dev === dev) return;
         const c = ctx || UI.measureCtx();
         const f = c.font;
@@ -327,9 +328,8 @@
         ctx.textBaseline = 'middle';
         ctx.font = UI.font(17, 'italic');
         ctx.fillStyle = 'rgba(191,232,255,0.7)';
-        const n = G.game && G.game.progress ? (G.game.progress.sparks || []).length : 0;
-        const total = (G.Items && G.Items.totals && G.Items.totals.sparks) || 6;
-        UI.spacedText(ctx, UI.text('items.spark.name', "Chandler's Spark") + '   ' + n + ' / ' + total, W / 2, 166, 1.5, 'center');
+        // no "n / total" counter (no spoilers): the memory's own title below names it
+        UI.spacedText(ctx, UI.text('items.spark.name', "Chandler's Spark"), W / 2, 166, 1.5, 'center');
         if (S && S.title) {
           ctx.font = UI.font(32, 'italic');
           ctx.fillStyle = '#d8ecff';

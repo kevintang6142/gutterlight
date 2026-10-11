@@ -156,7 +156,8 @@
   UI.layoutRich = function (ctx, text, maxW, size) {
     const s = String(text == null ? '' : text);
     const dev = (G.input && G.input.lastDevice) || 'keyboard';
-    const key = 'r|' + ctx.font + '|' + maxW + '|' + dev + '|' + s;
+    // labelsVersion: key caps follow rebinding and learned keyboard layouts
+    const key = 'r|' + ctx.font + '|' + maxW + '|' + dev + '|' + ((G.input && G.input.labelsVersion) || 0) + '|' + s;
     const hit = wrapCache.get(key);
     if (hit) return hit;
     const font = ctx.font;
@@ -660,6 +661,24 @@
     inp.consume('cancel');
     for (const a of (shared || ['attack'])) if (inp.pressed(a)) return false;
     return true;
+  };
+  /**
+   * A "close this menu" press: 'cancel', or one of `actions` (pause / inventory / map...) that was NOT also a
+   * confirm press. Enter / pad A are lockout confirm inputs, but they can also be bound to Pause or Inventory;
+   * confirm must win in menus or a pad player could never press A on "Controls" (lockout protection).
+   * Consumes the close actions (never 'confirm', so a following UI.pressedAny(UI.CONFIRM) still sees it).
+   */
+  UI.pressedClose = function (actions) {
+    const inp = G.input;
+    if (!inp) return false;
+    const conf = !!inp.pressed('confirm');
+    let close = false;
+    for (const a of actions) {
+      if (a === 'confirm' || !inp.pressed(a)) continue;
+      if (a === 'cancel' || !conf) close = true;
+      inp.consume(a);
+    }
+    return close;
   };
   UI.CONFIRM = ['confirm'];
   UI.ADVANCE = ['confirm', 'attack', 'jump'];

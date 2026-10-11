@@ -28,6 +28,9 @@
   const T = G.T || {};
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, k) => a + (b - a) * k;
+  /** Explicit telegraphs (lit drip columns + floor rings, the slam landing ring, glows on the flood) draw only in easy;
+   *  kept-subtle exceptions: docs/api/boss-tallowmere.md ("Telegraphs by mode"). */
+  const teleOn = () => (G.telegraphsOn ? G.telegraphsOn() : true);
   const damp = (a, b, rate, dt) => b + (a - b) * Math.exp(-rate * dt);
   const rnd = (a, b) => a + Math.random() * (b - a);
   const smooth = (k) => { k = clamp(k, 0, 1); return k * k * (3 - 2 * k); };
@@ -552,7 +555,12 @@
       const x = this.cx;
       const k = this.falling ? 1 : clamp(this.hangT / this.hang, 0, 1);
       // floor shadow: darkens as the drop swells / falls (the floor-side telegraph)
-      if (this.surfY) {
+      if (this.surfY && !teleOn()) {
+        // standard / hardcore (kept-subtle): only a soft dark shadow on the floor — no lit column, ring or glow
+        const near = this.falling ? clamp(1 - (this.surfY - this.cy) / 800, 0.6, 1) : 0.35 + 0.45 * k;
+        ctx.fillStyle = 'rgba(6,8,10,' + (0.6 * near).toFixed(3) + ')';
+        ctx.beginPath(); ctx.ellipse(x, this.surfY - 1, 12 + 8 * near, 4, 0, 0, TAU); ctx.fill();
+      } else if (this.surfY) {
         // the warned column (from the top of the view down to the floor) + a pulsing molten mark on the floor
         const cam = G.camera, y0 = cam ? Math.max(this.topY, cam.y - 10) : this.topY;
         const pulse = 0.5 + 0.5 * Math.sin((this.hangT + this.age) * 14);
@@ -919,7 +927,8 @@
         const surf = surfaceBelow(room, x, top + 4);
         // the warned column glows until the drop lands (hang + fall time)
         const dist = Math.max(0, surf - (top + 12)), fall = (-DRIP_V0 + Math.sqrt(DRIP_V0 * DRIP_V0 + 2 * DRIP_G * dist)) / DRIP_G;
-        this.warnZone({ x: x - 22, y: top, w: 44, h: Math.max(TILE, surf - top), dur: d.hang + fall, style: 'column', color: PAL.molten });
+        // standard / hardcore: cue 'drip' — molten droplets dribble from the vault (or the top of the view) over the column
+        this.warnZone({ x: x - 22, y: top, w: 44, h: Math.max(TILE, surf - top), dur: d.hang + fall, style: 'column', color: PAL.molten, cue: 'drip' });
         G.spawnProjectile(room, 'tallow_drip', { x, y: top + 12, topY: top, surfY: surf, hang: d.hang, fallVy: DRIP_V0, fallGravity: DRIP_G, owner: this, damage: 1 });
       }
       if (pick.length) sfx('tallow_glint', pick.length ? pick[0] * slotW : this.cx, { vol: 0.7 });
@@ -1055,7 +1064,7 @@
         this.face();
         d.spots = this.summonSpots();
         d.W = this.telegraph(0.7, { color: '#9fd6ff', sound: 'tallow_chant', shake: 1 });
-        for (const x of d.spots) this.warnZone({ x: x - 32, y: this.floorY() - 22, w: 64, h: 22, dur: d.W, style: 'floor', color: '#9fd6ff' });
+        for (const x of d.spots) this.warnZone({ x: x - 32, y: this.floorY() - 22, w: 64, h: 22, dur: d.W, style: 'floor', color: '#9fd6ff', cue: 'none' });   // the flood boils there (risePts)
         this.risePts = d.spots.map((x) => ({ x, t0: this.t, dur: d.W }));
         sfx('tallow_rise', d.spots[0] || this.cx, { vol: 0.8 });
       }
@@ -1117,7 +1126,7 @@
       if (s < 1.6) { this.set('tollHit', 14); return; }
       this.set('spread', 7);
       if (this.once('warn')) {
-        for (const x of d.spots) this.warnZone({ x: x - 32, y: this.floorY() - 22, w: 64, h: 22, dur: 0.75, style: 'floor', color: '#9fd6ff' });
+        for (const x of d.spots) this.warnZone({ x: x - 32, y: this.floorY() - 22, w: 64, h: 22, dur: 0.75, style: 'floor', color: '#9fd6ff', cue: 'none' });
         this.risePts = d.spots.map((x) => ({ x, t0: this.t, dur: 0.75 }));
         sfx('tallow_rise', d.spots[0] || this.cx, { vol: 0.8 });
       }
@@ -1174,8 +1183,9 @@
         const k = smooth((this.deathT || 0) / 1.2);
         P = mixPose(POSES.stagger, POSES.kneel, k);
       }
-      // landing shadow of the belly slam (floor-side telegraph)
-      if (this.slamTarget != null && !this.grounded) {
+      // landing shadow of the belly slam (floor-side telegraph; easy only — standard: the crouch + groan and the visible hop)
+      const tele = teleOn();
+      if (tele && this.slamTarget != null && !this.grounded) {
         const fy = this.floorY(), hgt = clamp((fy - (this.y + this.h)) / 220, 0, 1);
         ctx.fillStyle = 'rgba(6,8,10,' + (0.5 - 0.25 * hgt).toFixed(3) + ')';
         ctx.beginPath(); ctx.ellipse(this.slamTarget, fy - 2, (this.w / 2 + 40) * (1 - 0.3 * hgt), 9, 0, 0, TAU); ctx.fill();
@@ -1189,7 +1199,7 @@
           const k = clamp((this.t - r.t0) / r.dur, 0, 1);
           if (k >= 1 && this.t - r.t0 > r.dur + 0.4) continue;
           const fy = this.floorY(), pul = 0.6 + 0.4 * Math.sin(this.t * 18 + r.x);
-          glow(ctx, r.x, fy - 8, 60 + 30 * k, '#9fd6ff', (0.25 + 0.35 * k) * pul);
+          if (tele) glow(ctx, r.x, fy - 8, 60 + 30 * k, '#9fd6ff', (0.25 + 0.35 * k) * pul);   // the lit mark: easy only; the boiling stays
           ctx.strokeStyle = 'rgba(200,236,250,' + (0.4 + 0.5 * k).toFixed(3) + ')'; ctx.lineWidth = 2;
           for (let i = 0; i < 3; i++) {
             const q = ((this.t * 1.6 + i / 3) % 1);

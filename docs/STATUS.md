@@ -1,6 +1,6 @@
 # GUTTERLIGHT — project status
 
-**Release state: 1.0 release candidate, packaged (module qa-package, 2026-10-10).** Content-complete (81/81 rooms, 10
+**Release state: 1.0 release candidate, packaged (module qa-package, 2026-10-10; latest update packaged: control rebinding, §1m, 2026-10-11).** Content-complete (81/81 rooms, 10
 regions, 8 bosses, 16 music tracks), all automated verification green on the final tree, single-file build
 `dist/Gutterlight.html` verified, player `README.md` at the project root. **Not yet done: a human play-through and a
 listen (§3 item 1)** — every result below is automated (headless Chromium).
@@ -11,9 +11,12 @@ wave 2** (Meltbloom Gardens, the Sootflue, Sable's two duels, the Soot Matron, t
 (the Drowned Nave, the Chandlery, the Mothwood, the Rime, the Heartwick Sanctum, Tallowmere, the Kiln Mother,
 Vespertine, Lucerne + both endings, the battle and late music) and their post-wave integrations, then the **baseline QA
 pass** (§1e), **QA round 1** (§1f), **QA round 2** (§1g) and **release packaging** (§0). Change log of every
-cross-module fix: `docs/INTEGRATION_LOG.md` (#1-#65).
+cross-module fix: `docs/INTEGRATION_LOG.md` (#1-#72). After release: **difficulty modes, boss wisp placement and a
+no-spoiler inventory** (§1h), its QA round (§1i) and its release (§1j, module modes-package); then **control
+rebinding and no soul/damage numbers** (§1k), its QA round (§1l, module rebind-reverify) and its release (§1m,
+module rebind-package).
 
-**One command verifies everything:** `node tools/test_all.js` (23 steps, ~22-35 min incl. the ~7-12 min `playthrough` and the audio step; `--quick` ~3 min, skips them).
+**One command verifies everything:** `node tools/test_all.js` (27 steps, ~30-45 min incl. the ~7 min `playthrough`, the ~5 min `modes_tele` and the ~11 min audio step; `--quick` ~3 min, skips them).
 It must print `ALL PASS` before and after every content change.
 
 ---
@@ -90,6 +93,9 @@ Every run is clean: no console errors, no console warnings in the real flow, no 
 `[object` / `null` text drawn (e2e checks every `fillText`).
 
 ### Last full run (`node tools/test_all.js`)
+**Latest: ALL PASS (27 steps incl. `modes`, `modes_tele`, `input`, `rebind`; 1641 s) after the rebinding QA fixes, §1l
+(`test-output/rebind-reverify/test_all_final.log`).** Before that: 26 steps, 1758 s, on the rebinding/no-numbers tree, §1k. The
+paragraph below is the 1.0 packaging run (23 steps, before the modes).
 `audit text motor engine player ui interact enemies audio art plan_check plan_render validate tools reach_fx
 reach_plan_fx reach reach_margin smoke e2e playthrough build e2e_dist` → **ALL PASS** (23 steps, 1091 s, release packaging,
 module qa-package, on the final tree: `test-output/qa-package/test_all_1.txt`; details §0.2). Previous: QA round 2
@@ -271,7 +277,181 @@ Still open from this round (none blocking; owners in brackets):
 - [tools] the r2 regressions (`qa-fix-engine-r2/engine_r2_check.js`, `twotabs_check.js`, `qa-fix-ui-r2/*check.js`,
   `qa-fix-text-r2/check.js`) are not wired into `test_all` (interact's is, via its self-test).
 
+## 1h. Difficulty modes, boss wisp placement, no-spoiler inventory (module modes-integration)
+
+Requested by the owner after playing. Build modules: modes-core, wisp-placement, tele-framework, tele-bosses2,
+tele-enemies, no-spoilers (`test-output/<module>/notes.md`); integration: `docs/INTEGRATION_LOG.md` #66-#72.
+
+- **Trials.** New Game asks for a Trial (Easy / Standard / Hardcore, cursor on Standard; Hardcore asks to confirm).
+  `progress.mode`; saves from before the modes load as Easy; `?mode=` overrides for new games, `?test=1` defaults to
+  Easy. Getter: `G.game.difficulty()` (NOT `G.game.mode`, which stays the engine state); `G.game.telegraphs()` is true
+  only in Easy; draw code asks `G.telegraphsOn()`. Mode label on the slot card and in the pause menu.
+- **Telegraphs.** Easy draws exactly what the game drew before. Standard/Hardcore remove the explicit markers (floor
+  strips, landing rings, aim lines, columns ...) and rely on diegetic tells (wind-up, glow on the attacker, sound, dust /
+  cracks / drips). Following the owner's note, explicit markers are **kept in a dimmer form where removing them would
+  be unfair**; each is documented with its reason in the boss's doc ("Telegraphs by mode"): Matron (pounce mark when
+  she takes off off-camera, soot-ball shadows, ashfall haze), Tallowmere (vigil floor shadow, drop swelling at the
+  top of the screen), Kiln Mother (slag-gob ring for the last 0.55 s, heated floor plates), Vespertine (rim of a cloud
+  that is already harmful; her floor shadow), Lucerne (locked beam line, sweep edges, pulse-lane corridors), Effigy (a dim landing
+  band + floor cracks only when its leap takes off outside the camera view; modes-reverify). Sable keeps none. Regular enemies had no explicit markers (their glow/glint on the attacker stays in every mode;
+  `docs/api/enemies-*.md`).
+- **Gutterwisp after a boss death.** `G.wispSpotFor` (`src/entities/wisp.js`) moves the wisp of a death in an
+  unbeaten boss's arena (during the fight or before its trigger) to a spot reachable without starting the fight:
+  inside the arena's entry side where it is ≥ 10 tiles deep (Sable ×2, Tallowmere), else the room before the arena
+  (Effigy gw_04, Matron sf_02, Kiln Mother ch_08, Vespertine mw_06, Lucerne hs_02). Table + reasons in
+  `docs/api/interact.md`.
+- **Hardcore permadeath.** At the instant of death `progress.broken = true` and the save is written; after the death
+  animation a game-over screen, then the title. The slot shows the run as *Snuffed* (mode, region, time, completion),
+  cannot be continued, can be erased. Quit or reload mid-death cannot undo it. No Gutterwisp in Hardcore.
+- **No spoilers.** Inventory, map legend, item cards, spark memory and Lanternway list show only what has been found:
+  no placeholders, no `x / total` counters, no completion % in the inventory (still on the slot card).
+
+Verification (final tree): `node tools/test_all.js` **ALL PASS (25 steps, 1567 s)** incl. the new `modes` (102 checks:
+contract + the wisp after a real death in all 8 boss fights) and `modes_tele` (40 checks: every boss seeded in all 3
+modes, Standard = Hardcore frame for frame, Easy draws its markers, no errors), `playthrough` **36/36 in Standard**
+(`--mode easy`, the pre-modes run: also 36/36) and `e2e`/`e2e_dist` through the real
+Trial chooser. `node tools/playthrough.js --file dist/Gutterlight.html` (Standard): 36/36. Contact sheets easy | standard for every boss: `node tools/modes_check.js tele --shots` →
+`test-output/modes_check/tele_<boss>.png` (looked at: Effigy, Matron, Tallowmere, Kiln Mother, Vespertine, Lucerne;
+the build modules' own per-attack sheets in `test-output/tele-framework/` and `test-output/tele-bosses2/`).
+The scratch boss suites' flow checks the tele-framework module saw failing in every mode (`test-output/boss-matron`,
+`boss-tallowmere`) were stale tests, not regressions (gate id renamed in #34; no stinger when a seal card follows, QA
+audio fix); fixed in the scratch tests, both flows ALL PASS.
+
+Open (needs a human): fairness in Standard is judged by eye and by bots that read game state, not the screen; the
+kept faint markers (Matron ashfall haze, Kiln Mother heated floor) were tuned on downscaled sheets. See §3 item 0.
+
+## 1i. Modes QA: fixes integrated and re-verified (module modes-reverify)
+
+Finders: modes-find-fairness, modes-find-modes, modes-find-wisp, modes-find-spoilers. Fixers: boss:effigy, engine, ui,
+text (`test-output/modes-fix-*/notes.md`). Integration: `docs/INTEGRATION_LOG.md` #74-#77.
+
+- **Effigy off-screen leap (fairness).** When the statue takes off outside the camera view, Standard/Hardcore show a
+  kept *subtle* landing mark (dim band + floor cracks/crumbs + faint rumble) 0.73-0.78 s before the hit; an in-view
+  leap shows none; Easy unchanged. Documented in `docs/api/boss-effigy.md`.
+- **Hardcore / Continue edge cases (engine).** A hardcore death in a stale tab (another window wrote the slot) still
+  breaks the run at once (`G.Save.markBroken`, matched by `runId`); game-over time = slot-card time; Continue on a
+  broken or erased slot is refused and the title comes back (was: black screen / a silent Standard New Game); quit
+  mid-death empties Ember like a respawn; Ember is capped on Continue; an old save whose wisp lies inside a boss arena
+  has it moved (via `G.wispSpotFor`) on Continue.
+- **No spoilers (ui/text).** The inventory's Sigil pane (header, notch meter, Equipped row, Sconce footer) appears only
+  once a Sigil is owned; Quill lists only charts of regions the player has entered ("Nothing yet" + a new line
+  otherwise); the Controls list says "Dash", not "Flare Dash"; the first-death hint no longer says the wisp is "where
+  you fell".
+
+Verification (final tree): `node tools/test_all.js` **ALL PASS (25 steps, 2622 s)**: `modes` 113 checks (+ new
+`engine` section), `modes_tele` 50 (+ new Effigy `leap` section), `playthrough` 36/36 in Standard, `build` verify OK,
+`e2e`/`e2e_dist` 42 each; `text_check` now also rejects ability names in control labels and a "where you fell" hint.
+Finder repros re-run: `modes-find-modes/p1.js` (title shown, no black screen), `p2.js` (broken at the instant of death,
+Continue refused, erased slot refused), `modes-find-wisp/t4.js` (Ember 0 / 66, legacy wisp moved to gw_04),
+`modes-find-fairness/force.js effigy leap` + `test-output/modes-reverify/leap840.js` (the finder's 840/1140 px cases
+now get the subtle mark, lead 0.73-0.75 s). Logs: `test-output/modes-reverify/`.
+
+Open: the Effigy's kept mark was judged on one screenshot (`test-output/modes-fix-boss-effigy/leap_standard.png`), not
+in hands-on play. Its visibility test uses a 40 px inset, so a statue standing at the very edge of the view (finder case
+dx -840) also gets the dim mark: conservative, harmless.
+
+
+## 1j. Release of the modes update (module modes-package, 2026-10-10)
+
+**What changed in this update** (requested by the owner after playing; details §1h, §1i):
+- **Three Trials, chosen at New Game** (cursor on Standard; fixed for the run, shown on the slot card and in the pause
+  menu). **Easy** = the game exactly as before (all explicit telegraphs). **Standard** = explicit markers removed;
+  every attack keeps a diegetic tell (wind-up, glow on the attacker, sound, dust / cracks / drips), and a few dimmer
+  markers are kept on purpose where an attack would otherwise be unfair (each listed with its reason in the boss's doc,
+  "Telegraphs by mode"). **Hardcore** = Standard + permadeath: the slot is marked broken and saved at the instant of
+  death, a game-over screen follows, the slot shows the run as *Snuffed* (mode, region, time, completion) and can only
+  be erased. Saves from before the update load as Easy.
+- **Gutterwisp after a boss death** is never left inside an unbeaten boss fight: it waits in the room before the arena
+  or just inside the arena's entry side (per boss, `docs/api/interact.md`). No Gutterwisp in Hardcore.
+- **No spoilers in the inventory** (and map legend, cards, spark memory, Lanternway list, Quill's charts): only what
+  has been found is shown; no placeholders, no `x / total` counters, no empty slots.
+- `README.md`: "Modes" section (Easy / Standard / Hardcore, chosen at New Game, cannot be changed later, Hardcore saves
+  are lost on death), the Gutterwisp-after-a-boss tip, `?mode=` in the developer URL parameters, test_all timing.
+- `.nojekyll` present at the repo root (GitHub Pages must serve `src/data/regions/_regions.js`).
+
+**Verification (final tree, logs in `test-output/modes-package/`):**
+| Command | Result | Log |
+|---|---|---|
+| `node tools/test_all.js` (full) | **ALL PASS (25 steps) in 1758 s**, exit 0: audit 5 · motor 48 · engine 46 · player 35 · ui 96 · interact 26 · enemies 50 · tools 62 · reach 0 err / 2 known warnings · e2e 42 · **modes 113** · **modes_tele 50** · **playthrough 36/36 in Standard** (101 094 frames, 0 console warnings) · build verify OK · e2e_dist 42 | `test_all_1.log`, per step `test-output/test_all/<step>.log` |
+| `node tools/build.js` (in test_all) | `dist/Gutterlight.html` written, boots: 104 scripts inlined, 3 550 721 bytes (896 424 gzipped) | `test-output/test_all/build.log` |
+| `node tools/playthrough.js --file dist/Gutterlight.html` | **ALL PASS (36 steps)** in Standard through the real Trial chooser, 393.6 s, 114 room exits, 71 rooms, both endings, 0 console warnings, 101 094 frames, identical to the source run | `playthrough_dist.log` |
+| `node test-output/qa-package/release_check.js dist/Gutterlight.html` | ALL PASS: plain run silent, no network, title first, debug overlay off; test-only params still gated | `release_check_dist.log` |
+
+Still open (unchanged, §3 item 0): no human has played Standard/Hardcore; the fairness of the removed and kept
+telegraphs is judged by bots, timings and screenshots only.
+
 ---
+
+## 1k. Control rebinding and no soul/damage numbers (modules rebind-core, no-numbers, rebind-integration)
+
+Requested by the owner. (1) **Every gameplay action can be rebound** on the Controls screen (from Pause > Controls or
+the title): two keyboard/mouse slots and one gamepad slot per action. Mouse buttons can be bound (LMB/RMB/MMB/Mouse 4/5).
+Bindings persist in `G.settings.bindings` and are validated on load. Lockout fallbacks: Enter/Esc/arrows and pad
+A/B/D-pad always work in menus, and Esc always pauses. Every prompt, card, tablet and tip follows the current bindings.
+(2) **No Ember or damage numbers** anywhere player-facing. Health is shown as candles, sigil costs as notch pips, and
+the Brand by name. `tools/text_check.js` enforces this. Cinders and prices stay.
+
+Verification: `node tools/test_all.js` **ALL PASS (26 steps, 1758 s)**, including the new `input` step
+(`tools/input_check.js`, 54 checks with real keyboard/mouse events and a mocked gamepad). `playthrough --file dist` 36/36.
+`input_check --file dist` 54/0. Details and change list: `docs/INTEGRATION_LOG.md` #78-#87.
+
+Open: the mouse back/forward buttons and rebinding were tested only in headless Chromium. No hands-on gamepad test was
+done (the gamepad was mocked).
+
+## 1l. Rebinding QA: fixes integrated and re-verified (module rebind-reverify)
+
+Four finders (input, labels, numbers, regression) reported defects; two fixers corrected them. **Engine**
+(`src/core/input.js`): in menus, a gameplay action bound to an arrow / D-pad / Enter / pad A-B only means its menu
+role (Jump on ↑ no longer navigates *and* confirms: two presses used to Quit to Title). Bound Alt/Ctrl now block
+browser shortcuts (Alt+←, Ctrl+D/P/S). Meta/Win/Cmd cannot be bound. Pause always keeps a gamepad button (a rebind
+that takes Start swaps, or is refused). Labels never show the other device's key. **UI** (`src/ui/*`): Pause or
+Inventory on pad A no longer closes the screen instead of confirming. A pad player can cancel a capture (B on keyboard
+columns, the 10 s timeout can no longer be extended). The Controls screen opens on the Gamepad column after pad use.
+Prompts and the fallback line follow the device. Enter is refused by the capture. World prompts show the Interact key.
+The Ember Urn count is drawn as icons.
+Integration (#88-#93): 9 text keys; Controls notes for system keys, "Pause needs a gamepad button." and the Ctrl+W/T/N
+warning; refusal notes are now visible while the capture keeps listening; Enter/NumpadEnter reserved in the engine;
+the fixers' probes became `tools/rebind_check.js` (test_all step `rebind`, 45 checks in 3 pages).
+
+Verification: `node tools/test_all.js` **ALL PASS (27 steps, 1641 s)**: `input` 54, `rebind` 3/3 parts, `ui` 96,
+`e2e`/`e2e_dist` 42 each, `modes` 113, `modes_tele` 50, `playthrough` 36/36, `build` verify OK. On dist:
+`rebind_check --file dist/Gutterlight.html` ALL PASS, `input_check --file dist/Gutterlight.html` 54/0. Finder repros
+re-run, all corrected (`test-output/rebind-reverify/find_input_probes.log`).
+
+Still open (by design or not testable here): Ctrl+W/T/N and Cmd+Q cannot be blocked by any page (a note says so). The
+macOS Cmd keyup fix and Win-key behaviour were not tested (headless Linux). In the Gamepad column B is a valid binding,
+so a pad-only player cancels there by waiting about 10 s (the prompt says so). A habitual double A on a pad
+rebinds Left's pad slot to A (with a "moved from Jump" note). Gamepads are still tested only with a mock.
+
+## 1m. Release of the rebinding update (module rebind-package, 2026-10-11)
+
+**What changed in this update** (requested by the owner; details §1k, §1l, `docs/INTEGRATION_LOG.md` #78-#93):
+- **Every gameplay control can be rebound** (left, right, up, down, jump, attack, dash, spell, interact, map,
+  inventory, pause) on the Controls screen (title > Controls or Pause > Controls): two keyboard/mouse slots and one
+  gamepad slot per action. Keys, **mouse buttons** (LMB, RMB, MMB, Mouse 4, Mouse 5; e.g. Attack on the left mouse
+  button) and gamepad buttons/triggers/directions can be bound. Backspace/Delete clears a slot, Esc cancels, Reset to
+  Defaults (with confirmation). An input taken from another action moves (with a note); no action can lose its last
+  binding. Defaults are unchanged. Bindings are saved with the settings (shared by all slots) and validated on load.
+- **Lockout protection:** Enter, Esc and the arrows (pad A, B, D-pad) always work in menus; Esc always pauses.
+- **Prompts follow the bindings** and the last-used device: ability/item cards, lore tablets, HUD and menu hints, tips.
+- **No Ember (soul) or damage numbers** anywhere player-facing; Cinders and prices stay, sigil costs are notch pips.
+- `README.md`: the Controls section explains rebinding (keyboard, mouse buttons, gamepad, Reset to Defaults, lockout
+  fallbacks) above the default table (checked against `DEFAULTS` in `src/core/input.js`); the Saves section says the
+  bindings are stored with the options for all slots; `input_check` / `rebind_check` added to the developer commands.
+  No Ember or damage numbers in the README. `.nojekyll` present at the repo root.
+
+**Verification (final tree, logs in `test-output/rebind-package/`):**
+| Command | Result | Log |
+|---|---|---|
+| `node tools/test_all.js` (full) | **ALL PASS (27 steps) in 2302 s**, exit 0: audit 5 · text 0/0 · motor 48 · engine 46 · player 35 · ui 96 · interact 26 · enemies 50 · audio 89 renders · tools 62 · reach 0 err / 2 known warnings · smoke OK · e2e 42 · **input 54/0** · **rebind 3/3 parts** · modes 113 · modes_tele 50 · playthrough 36/36 (101 094 frames, 0 console warnings) · build verify OK · e2e_dist 42 | `test_all.log`, per step `test-output/test_all/<step>.log` |
+| `node tools/build.js` (in test_all) | `dist/Gutterlight.html` written and boots: 104 scripts inlined, 3 600 344 bytes (910 474 gzipped) | `test-output/test_all/build.log` |
+| `node tools/playthrough.js --file dist/Gutterlight.html` | **ALL PASS (36 steps)**, 633 s, 114 room exits, 71 rooms, 14 rests, 8 travels, both endings, 0 console warnings, 101 094 frames (identical to the source run) | `playthrough_dist.log` |
+| `node tools/input_check.js --file dist/Gutterlight.html` | PASS: 54 passed, 0 failed | `input_dist.log` |
+| `node tools/rebind_check.js --file dist/Gutterlight.html` | ALL PASS (3 parts) | `rebind_dist.log` |
+| `node test-output/qa-package/release_check.js dist/Gutterlight.html` | ALL PASS (plain run silent, no network, title first, debug overlay off, test params gated) | `release_check_dist.log` |
+
+Still open (unchanged, §1l): all rebinding tests ran in headless Chromium on Linux with real keyboard/mouse events
+and a **mocked** gamepad. No human has tried mouse back/forward buttons, a real gamepad, Firefox/Safari or macOS.
 
 ## 2. What does not exist yet
 
@@ -280,6 +460,13 @@ Nothing planned is missing. Open work is polish, human playtesting and listening
 ---
 
 ## 3. Known issues and open work (most severe first; owner in brackets)
+
+0. **Difficulty modes need a human playtest in Standard/Hardcore** (§1h): no human has played without the explicit
+   telegraphs. Watch Matron ashfall, Tallowmere vigil, Kiln Mother heated floor/slag gobs and Lucerne pulse lanes; if
+   a pattern feels unfair, strengthen its diegetic tell or its kept marker (each boss doc lists both). In Standard the
+   cosmetic tells consume a few extra `Math.random` calls, so attack sequences differ from Easy's (still random).
+   Quill lists charts only of regions the player has entered (modes-reverify, §1i); the Effigy's kept off-screen leap
+   mark (dim band + cracks) was checked on one screenshot only.
 
 1. **Not verified by humans (highest priority before release):** a continuous play-through now exists, but by a bot
    (`tools/playthrough.js`, §1: New Game → both endings in the real build, real inputs for all movement) — no human has

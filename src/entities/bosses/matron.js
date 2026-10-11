@@ -32,6 +32,9 @@
   const damp = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
   const C = () => (G.Art && G.Art.char) || null;
   const glow = (ctx, x, y, r, color, a) => { if (G.Art && G.Art.glow) G.Art.glow(ctx, x, y, r, color, a); };
+  /** Explicit telegraphs (landing seams, lit soot lanes, soot landing rings) draw only in easy; see the kept-subtle
+   *  exceptions in docs/api/boss-matron.md ("Telegraphs by mode"). */
+  const teleOn = () => (G.telegraphsOn ? G.telegraphsOn() : true);
 
   // ---------------------------------------------------------------------------------------------------------
   // Palette & numbers
@@ -570,10 +573,14 @@
       if (this.fired) return;
       const k = this.age / this.dur;
       if (this.style === 'column' && Math.random() < dt * (10 + 30 * k)) G.fx.burst('ash', this.x + Math.random() * this.w, this.y + 6, { count: 1, color: '#9a8070' });
+      const tele = teleOn();
+      // standard / hardcore: the chimney sheds burning soot over the lane (framework 'dust' cue; hold marks skip super.update)
+      if (!tele) { if (this.props.hold && this.cue !== 'none') this.updateCue(dt); return; }
       if (this.style === 'floor' && Math.random() < dt * 14) G.fx.burst('ember', this.x + Math.random() * this.w, this.y + this.h - 4, { count: 1, color: EMBER_HI, speed: 40 });
       if (G.lighting) G.lighting.add({ x: this.cx, y: this.style === 'column' ? this.y + this.h - 30 : this.y + this.h - 10, r: this.style === 'column' ? 90 : 120, color: '#ff8a40', intensity: 0.25 + 0.3 * k });
     }
     draw(ctx, t) {
+      if (!teleOn()) { if (this.keep) this.drawSubtle(ctx); return; }
       const k = clamp(this.age / this.dur, 0, 1);
       const pulse = 0.5 + 0.5 * Math.sin(this.age * (12 + 20 * k));
       const x0 = this.x, x1 = this.x + this.w, yb = this.y + this.h;
@@ -619,6 +626,27 @@
       }
       ctx.restore();
       void t;
+    }
+    /** Standard / hardcore kept-subtle form (documented exceptions), only while warning (never the live lane):
+     *  column — a soft-edged curtain of dark soot haze sifting down (reads on the ember-lit den, no lit edges/bars);
+     *  floor  — a dim, unlit glow band (no brackets, no seam). */
+    drawSubtle(ctx) {
+      if (this.fired) return;
+      const k = clamp(this.age / this.dur, 0, 1), yb = this.y + this.h;
+      ctx.save();
+      if (this.style === 'column') {
+        const g = ctx.createLinearGradient(this.x, 0, this.x + this.w, 0);
+        const a = (0.32 + 0.28 * k).toFixed(3);
+        g.addColorStop(0, 'rgba(26,16,14,0)'); g.addColorStop(0.3, 'rgba(26,16,14,' + a + ')');
+        g.addColorStop(0.7, 'rgba(26,16,14,' + a + ')'); g.addColorStop(1, 'rgba(26,16,14,0)');
+        ctx.fillStyle = g; ctx.fillRect(this.x, this.y, this.w, this.h);
+      } else {
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createLinearGradient(0, yb, 0, this.y);
+        g.addColorStop(0, 'rgba(255,170,100,' + (0.14 + 0.12 * k).toFixed(3) + ')'); g.addColorStop(1, 'rgba(255,140,70,0)');
+        ctx.fillStyle = g; ctx.fillRect(this.x, this.y, this.w, this.h);
+      }
+      ctx.restore();
     }
   } : null;
 
@@ -859,7 +887,11 @@
     /** Pulsing landing mark on surface s around centre x (until dur). */
     markLanding(s, x, dur, color, wide) {
       const m = wide ? 30 : 10;
-      const z = this.room ? this.room.add(new Mark({ x: x - BW / 2 - m, y: s.y - 44, w: BW + 2 * m, h: 44, dur: Math.max(0.1, dur), color: color || TELE, style: 'floor' })) : null;
+      // standard / hardcore: her crouch + visible leap is the tell (no mark) — unless she takes off outside the camera
+      // view (a wall cling / the strand off-screen): then a dim mark stays so the landing never comes from nowhere
+      const seen = !G.camera || typeof G.camera.visible !== 'function' || G.camera.visible(this.x, this.y, this.w, this.h, -40);
+      const z = this.room ? this.room.add(new Mark({ x: x - BW / 2 - m, y: s.y - 44, w: BW + 2 * m, h: 44, dur: Math.max(0.1, dur), color: color || TELE, style: 'floor',
+        cue: 'none', keep: seen ? false : 'subtle' })) : null;
       if (z) this.zones.push(z);
       return z;
     }
@@ -1373,7 +1405,10 @@
         while (r < this.room.rows && !A.isSolid(c, r)) r++;
         const bottom = r * TILE;
         const room = this.room;
+        // standard / hardcore: kept-subtle (two overlapping waves; the second lands between the first) + burning soot
+        // sifting from the chimney over the lane (framework 'dust' cue in soot/ember colours)
         room.add(new Mark({ x: x - W / 2, y: A.ceilY, w: W, h: bottom - A.ceilY, dur: 0.8, color: '#ff9a50', style: 'column', hold: true,
+          cue: 'dust', cueColor: [EMBER_HI, '#2e201b'], keep: 'subtle',
           onDone: () => {
             if (!room || (G.game && G.game.room !== room) || this.dying || this.dead) return null;
             return G.spawnProjectile(room, 'matron_ash', { x, y: A.ceilY + 16, vx: 0, vy: 950, owner: this });
@@ -1787,8 +1822,9 @@
     }
     draw(ctx, t) {
       const ly = this.props.landY, lx = this.props.landX;
-      // where it will land: a smouldering ring on the floor from the moment it is spat
-      if (ly != null && lx != null && ly > this.cy) {
+      // where it will land: a smouldering ring on the floor from the moment it is spat (easy only)
+      const tele = teleOn();
+      if (tele && ly != null && lx != null && ly > this.cy) {
         const k = clamp(this.age / 0.9, 0, 1), pulse = 0.5 + 0.5 * Math.sin(this.age * 18);
         ctx.save(); ctx.globalCompositeOperation = 'lighter';
         glow(ctx, lx, ly - 3, 20 + 8 * k, EMBER, 0.3 + 0.3 * k);
@@ -1800,10 +1836,14 @@
       if (gy != null) {
         const k = clamp(1 - (gy - this.cy) / 420, 0.15, 1);
         const ch = C();
-        if (ch) ch.shadow(ctx, this.cx, gy, 10 + 10 * k, 0.35 + 0.35 * k);
-        ctx.save(); ctx.globalCompositeOperation = 'lighter';
-        glow(ctx, this.cx, gy - 2, 14 + 10 * k, EMBER, 0.18 + 0.3 * k);
-        ctx.restore();
+        // standard / hardcore: kept-subtle — only the ball's own soft shadow under it (no ember glow): 3–5 balls are
+        // lobbed at once and their arcs can leave the top of the view
+        if (ch) ch.shadow(ctx, this.cx, gy, 10 + 10 * k, (0.35 + 0.35 * k) * (tele ? 1 : 0.6));
+        if (tele) {
+          ctx.save(); ctx.globalCompositeOperation = 'lighter';
+          glow(ctx, this.cx, gy - 2, 14 + 10 * k, EMBER, 0.18 + 0.3 * k);
+          ctx.restore();
+        }
       }
       const tr = this.trail, spr = G.Art && G.Art.dotSprite ? G.Art.dotSprite(SMOKE) : null;
       if (spr) for (let i = 0; i < tr.length; i += 2) { const k = i / tr.length, r = 4 + 8 * k; ctx.globalAlpha = 0.25 + 0.35 * k; ctx.drawImage(spr, tr[i] - r, tr[i + 1] - r, r * 2, r * 2); }

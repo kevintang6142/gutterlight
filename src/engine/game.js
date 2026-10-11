@@ -26,8 +26,20 @@
       sparks: [], seals: [],
       bosses: {}, flags: {}, visited: {}, charts: {}, lanterns: {},
       wisp: null,
+      // Difficulty (G.game.difficulty()): 'easy' | 'standard' | 'hardcore'. A save without it predates the modes and
+      // migrates to 'easy' (how the game played then). broken = a hardcore run that ended in death (never resumable).
+      mode: 'easy', broken: false,
+      // A random id per journey (newGame; older saves get one on Continue): G.Save.markBroken only snuffs the stored
+      // slot when it is still this run (another window may have started a new one there).
+      runId: null,
     };
   }
+  const MODES = ['easy', 'standard', 'hardcore'];
+  const validMode = (m) => (typeof m === 'string' && MODES.indexOf(m) >= 0 ? m : null);
+  // ?mode=easy|standard|hardcore (tests): the mode of new progress when the caller does not choose one. Otherwise
+  // a test run (?test=1) defaults to 'easy' (existing tests keep their behaviour) and a release run to 'standard'.
+  function paramMode() { return validMode(G.params && G.params.mode); }
+  function defaultMode() { return paramMode() || (G.test ? 'easy' : 'standard'); }
   // Fill missing fields of loaded data (forward-compatible saves). Every known field is coerced to the type of its
   // default (arrays of strings, plain objects, finite numbers in a sane range, nullable records): a hand-edited or
   // corrupted save must never reach the game with e.g. `equipped: {}` (QA robust: black screen on Continue).
@@ -47,9 +59,10 @@
     }
     if (typeof def === 'boolean') return typeof v === 'boolean' ? v : def;
     switch (k) { // nullable fields (default null)
-      case 'ending': case 'lastRoom': return typeof v === 'string' ? v : null;
+      case 'ending': case 'lastRoom': case 'runId': return typeof v === 'string' ? v : null;
       case 'sconce': return isObj(v) && typeof v.room === 'string' ? v : null;
       case 'wisp': return isObj(v) && typeof v.room === 'string' && isFinite(v.x) && isFinite(v.y) ? v : null;
+      case 'mode': return validMode(v) || 'easy';
       default: return v;
     }
   }
@@ -76,6 +89,8 @@
     }
     for (const k in data) if (!(k in p)) p[k] = data[k];
     p.slot = slot | 0;
+    if (p.mode !== 'hardcore') p.broken = false; // only a hardcore run can be broken
+    if (p.broken) p.wisp = null;
     rewindFinishedRun(p);
     return p;
   }
@@ -131,7 +146,7 @@
   let trans = null;
   let respawning = false;
   let deathInfo = null;
-  let fallbackTitle = false, fallbackPaused = false, fallbackEnding = null;
+  let fallbackTitle = false, fallbackPaused = false, fallbackEnding = null, fallbackGameOver = null;
   let accumulator = DT / 2;
   let bossMusic = null;
 
@@ -302,6 +317,22 @@
     return c;
   };
   game.lightLantern = function (id) { P().lanterns[id] = true; game.saveNow(); };
+
+  // ------------------------------------------------------------------ difficulty modes
+  // NOTE: `game.mode` is (and stays) the engine state string ('boot' | 'title' | 'play' | 'transition' | 'dead' |
+  // 'ending' | 'gameover'), so the run's difficulty is read with game.difficulty() (alias game.runMode()).
+  game.MODES = MODES;
+  /** The run's difficulty: 'easy' | 'standard' | 'hardcore' (progress.mode; without progress: the default mode). */
+  game.difficulty = function () {
+    const p = game.progress;
+    return (p && validMode(p.mode)) || defaultMode();
+  };
+  game.runMode = game.difficulty;
+  /** true when explicit attack telegraphs (hit zones, trajectories, landing marks...) are drawn: Easy only. */
+  game.telegraphs = function () { return game.difficulty() === 'easy'; };
+  game.isHardcore = function () { return game.difficulty() === 'hardcore'; };
+  /** true when the current run is a hardcore run that ended in death (it can never be resumed). */
+  game.isBroken = function () { return !!(game.progress && game.progress.broken); };
 
   // ---- conditions (§9.1) ----
   const COUNTS = {
@@ -671,8 +702,51 @@
   }
 
   // ------------------------------------------------------------------ death & respawn
+  // The boss fight state of a room at the instant of death: arenaActive = an arena controller is running (beat or
+  // fight) or a live, undefeated boss is in the room; bossId = that boss, else the boss of an undefeated arena in
+  // this room (died before triggering it), else null.
+  function arenaInfo(room) {
+    const out = { arenaActive: false, bossId: null };
+    if (!room || typeof room.find !== 'function') return out;
+    const undefeated = (id) => !!id && !game.bossDefeated(id);
+    const a = room.find((e) => e.type === 'arena' && !e.dead && e.active);
+    if (a) return { arenaActive: true, bossId: a.bossId || null };
+    const b = room.find((e) => !e.dead && typeof e.type === 'string' && e.type.indexOf('boss_') === 0 && undefeated(e.bossId));
+    if (b) return { arenaActive: true, bossId: b.bossId };
+    const idle = room.find((e) => e.type === 'arena' && !e.dead && undefeated(e.bossId));
+    if (idle) out.bossId = idle.bossId;
+    return out;
+  }
+  // The wisp record for a death (deathInfo): G.wispSpotFor (src/entities/wisp.js) may move it out of a boss room;
+  // its result is used when it names a known room and finite coordinates, else the death spot is kept.
+  function wispSpot(d) {
+    if (typeof G.wispSpotFor !== 'function') return null;
+    const r = safe(G.wispSpotFor, 'wispSpotFor', { room: d.room, x: d.x, y: d.y, arenaActive: !!d.arenaActive, bossId: d.bossId || null });
+    if (r && typeof r.room === 'string' && G.World.getRoom(r.room) && isFinite(r.x) && isFinite(r.y)) return { room: r.room, x: +r.x, y: +r.y };
+    if (r) G.reportError(new Error('wispSpotFor returned an invalid spot ' + JSON.stringify(r)), 'wispSpotFor');
+    return null;
+  }
+  function makeWisp(d, cinders) {
+    const spot = wispSpot(d) || d;
+    return { room: spot.room, x: spot.x, y: spot.y, cinders };
+  }
+  game._wispFor = makeWisp; // tests
+  // On Continue (the loaded progress is active, so bossDefeated reads this save): a wisp saved before wispSpotFor
+  // existed may still float inside a boss arena trigger; move it where a death there would now leave it (idempotent
+  // for wisps already placed by makeWisp). Keeps the cinders. Returns true when it moved.
+  function relocateWisp(pr) {
+    const w = pr && pr.wisp;
+    if (!w) return false;
+    const s = wispSpot({ room: w.room, x: w.x, y: w.y, arenaActive: false, bossId: null });
+    if (!s || (s.room === w.room && s.x === w.x && s.y === w.y)) return false;
+    pr.wisp = Object.assign({}, w, s);
+    return true;
+  }
+  game._relocateWisp = relocateWisp; // tests
+  const newRunId = () => Date.now().toString(36) + '-' + Math.floor(Math.random() * 2176782336).toString(36);
+
   game.playerDied = function () {
-    if (game.mode === 'dead' || !game.player || !game.room) return;
+    if (game.mode === 'dead' || game.mode === 'gameover' || !game.player || !game.room) return;
     const p = game.player, m = playerMotor(), room = game.room;
     game.mode = 'dead';
     game.deathTime = 0;
@@ -680,11 +754,33 @@
     trans = null;
     const fromHazard = !!(m && m.hazard) || (G.Combat && G.Combat.hazardActive);
     const pos = fromHazard && m && m.lastSafe ? m.lastSafe : { x: m ? m.x : p.x, y: m ? m.y : p.y };
+    const arena = arenaInfo(room);
     deathInfo = {
       room: room.id,
       x: Math.max(TILE, Math.min(room.widthPx - TILE, pos.x + p.w / 2)),
       y: Math.max(TILE, Math.min(room.heightPx - TILE, pos.y + p.h / 2)),
+      arenaActive: arena.arenaActive, bossId: arena.bossId,
+      final: false,
     };
+    // Hardcore (Steel Soul): the run ends HERE. Mark the save broken and write it before anything else (closing the
+    // tab or quitting mid-death cannot undo it); no wisp; stepDead plays the game-over screen instead of a respawn.
+    const pr = game.progress;
+    if (pr && game.difficulty() === 'hardcore') {
+      deathInfo.final = true;
+      deathInfo.playTime = pr.playTime; // the clock stops here (step), so the game-over screen matches the slot card
+      pr.broken = true;
+      pr.wisp = null;
+      pr.diedIn = room.id;
+      pr.health = 0;
+      // saveNow refuses a slot another window wrote since (stale); the permadeath mark must land anyway: markBroken
+      // skips those guards and snuffs the stored slot only while it still holds this hardcore run (runId).
+      const stale = !!(G.Save && G.Save.isStale && G.Save.isStale(game.slot));
+      const saved = !stale && game.saveNow();
+      if (!saved && G.Save && typeof G.Save.markBroken === 'function') {
+        safe(() => G.Save.markBroken(game.slot, { runId: pr.runId, diedIn: room.id, playTime: pr.playTime }), 'Save.markBroken');
+      }
+      G.events.emit('runBroken', { slot: game.slot, room: room.id, bossId: arena.bossId });
+    }
     const cx = p.x + p.w / 2, cy = p.y + p.h / 2;
     if (G.fx) {
       G.fx.burst('wax', cx, cy, { count: 18, color: '#efe6d2', speed: 380 });
@@ -700,7 +796,8 @@
 
   function respawn() {
     const pr = P();
-    if (deathInfo) pr.wisp = { room: deathInfo.room, x: deathInfo.x, y: deathInfo.y, cinders: pr.cinders };
+    if (pr.broken) { gameOver(); return; } // a broken (hardcore) run never respawns
+    if (deathInfo) pr.wisp = makeWisp(deathInfo, pr.cinders);
     pr.cinders = 0;
     pr.ember = 0;
     pr.health = game.maxHealth();
@@ -754,7 +851,7 @@
     game.room = null; game.region = null; game.player = null;
     game.hitstopTime = 0; game.deathTime = 0; game.lastThreatT = -1e9;
     conflictNoticeT = -1e9;
-    fallbackPaused = false; fallbackEnding = null;
+    fallbackPaused = false; fallbackEnding = null; fallbackGameOver = null;
     pendingPause.clear();
     if (G.fx) G.fx.clear();
     if (G.Combat) G.Combat.resetHazard();
@@ -764,11 +861,36 @@
     callUI('clearOverlays');
   }
 
-  game.newGame = function (slot) {
+  // Hardcore game over: after the death animation and a slow fade to black, the room is released and
+  // G.UI.playGameOver(info, done) plays (src/ui/ending.js), then the title. The save was already marked broken.
+  function gameOver() {
+    const pr = game.progress;
+    const info = {
+      slot: game.slot, room: (pr && pr.diedIn) || (game.room && game.room.id) || null,
+      regionId: game.room ? game.room.regionId : null,
+      playTime: deathInfo && isFinite(deathInfo.playTime) ? deathInfo.playTime : (pr ? pr.playTime : 0),
+      completion: pr ? (safe(game.completionOf, 'completionOf', pr) || 0) : 0,
+    };
+    if (pr) { pr.broken = true; pr.wisp = null; } // (respawn() guard path: make sure)
+    resetSession();
+    deathInfo = null;
+    game.mode = 'gameover';
+    game.sysFadeAlpha = 1; // stays black under the game-over screen; quitToTitle clears it
+    audio('music', null, { fade: 2.5 });
+    audio('ambience', null);
+    G.events.emit('gameOver', info);
+    const done = () => { if (game.mode === 'gameover') game.quitToTitle(); };
+    if (UIfn('playGameOver')) callUI('playGameOver', info, done);
+    else fallbackGameOver = { t: 0, done };
+  }
+
+  game.newGame = function (slot, mode) {
     resetSession();
     game.slot = slot | 0;
     if (G.Save && G.Save.claim) G.Save.claim(game.slot); // from now on, refuse to overwrite another window's writes
     game.progress = defaultProgress(game.slot);
+    game.progress.mode = validMode(mode) || defaultMode();
+    game.progress.runId = newRunId();
     fallbackTitle = false;
     const begin = () => {
       try {
@@ -786,21 +908,45 @@
     else begin();
   };
 
-  game.continueGame = function (slot) {
+  // Refuses (returns false, emits 'continueRefused' {slot, reason}) a snuffed hardcore run ('broken') and an empty slot
+  // ('missing': e.g. another window erased it while the slot list was open; opts.newIfMissing starts a New Game there
+  // instead). A refusal leaves the player on a working title: it is reopened unless it is showing right now (the
+  // title UI closes itself before calling us, so mode 'title' alone does not mean anything is on screen).
+  game.continueGame = function (slot, opts) {
     const data = G.Save ? G.Save.load(slot | 0) : null;
-    if (!data) { game.newGame(slot); return; }
+    const refuse = (reason) => {
+      G.events.emit('continueRefused', { slot: slot | 0, reason });
+      callUI('sfx', 'deny');
+      const t = G.UI && typeof G.UI.find === 'function' ? G.UI.find('title') : null;
+      const showing = game.mode === 'title' && (fallbackTitle || (t && t.state !== 'out'));
+      if (!showing) { resetSession(); game.progress = null; game.openTitle(); }
+      return false;
+    };
+    if (!data) {
+      if (opts && opts.newIfMissing) { game.newGame(slot); return true; }
+      return refuse('missing');
+    }
+    // a snuffed hardcore run is never resumed (the title disables Continue on it; this guards every other caller)
+    if (data.broken && validMode(data.mode) === 'hardcore') return refuse('broken');
     resetSession();
     fallbackTitle = false;
     game.slot = slot | 0;
     try {
       game.progress = migrate(data, game.slot);
-      game.progress.health = game.maxHealth();
+      const pr = game.progress;
+      // (saves from before run ids; written by the saveNow below). Derived from the loaded data, so two windows that
+      // continue the same old save agree on it (Save.markBroken matches runs by id).
+      if (!pr.runId) pr.runId = 'legacy-' + game.slot + '-' + Math.round((pr.playTime || 0) * 1000).toString(36);
+      pr.health = game.maxHealth();
+      relocateWisp(pr);
+      pr.ember = Math.min(pr.ember, game.emberMax()); // never above the well (the wisp holds a third of it)
       createPlayer();
       game.mode = 'play';
       goToRespawnPoint();
       game.saveNow();
       G.events.emit('continue', { slot: game.slot });
-    } catch (err) { startFailed(err, 'continueGame'); }
+    } catch (err) { startFailed(err, 'continueGame'); return false; }
+    return true;
   };
 
   // Starting a session threw (e.g. a save the migration could not make sense of): never leave a black screen with
@@ -821,13 +967,15 @@
   };
 
   game.quitToTitle = function () {
-    if (game.progress && game.room && game.mode !== 'ending') {
-      if (game.mode === 'dead' && deathInfo) { // keep the wisp if quitting mid-death
-        const pr = P();
-        pr.wisp = { room: deathInfo.room, x: deathInfo.x, y: deathInfo.y, cinders: pr.cinders };
+    if (game.progress && game.room && game.mode !== 'ending' && game.mode !== 'gameover') {
+      const pr = P();
+      if (game.mode === 'dead' && deathInfo && !pr.broken) { // keep the wisp if quitting mid-death
+        pr.wisp = makeWisp(deathInfo, pr.cinders);
         pr.cinders = 0;
+        pr.ember = 0; // the same penalty as respawn()
+        pr.health = game.maxHealth();
       }
-      game.saveNow();
+      game.saveNow(); // a broken run saves as broken (it was marked at the instant of death)
     }
     resetSession();
     game.fadeAlpha = 0; game.sysFadeAlpha = 0;
@@ -962,7 +1110,8 @@
     updateWorldFx(dt);
     if (game.deathTime >= 1.1 && !respawning) {
       respawning = true;
-      game._sysFade(1, 0.7, respawn);
+      if (deathInfo && deathInfo.final) game._sysFade(1, 1.6, gameOver); // hardcore: a slower fade, no respawn
+      else game._sysFade(1, 0.7, respawn);
     }
   }
 
@@ -971,10 +1120,15 @@
     if (game.mode === 'title' && fallbackTitle && inp.anyPressed()) {
       inp.consumeAll();
       fallbackTitle = false;
-      if (G.Save && G.Save.exists(0)) game.continueGame(0); else game.newGame(0);
+      const sum = G.Save && G.Save.exists(0) ? G.Save.summary(0) : null;
+      if (sum && sum.exists && !sum.broken) game.continueGame(0); else game.newGame(0);
     } else if (fallbackPaused && (inp.pressed('pause') || inp.pressed('cancel') || inp.pressed('confirm'))) {
       inp.consumeAll();
       fallbackPaused = false;
+    }
+    if (fallbackGameOver) {
+      fallbackGameOver.t += DT;
+      if (fallbackGameOver.t > 4 || (fallbackGameOver.t > 1.5 && inp.anyPressed())) { const d = fallbackGameOver.done; fallbackGameOver = null; d(); }
     }
     if (fallbackEnding) {
       fallbackEnding.t += DT;
@@ -1005,7 +1159,9 @@
       default: break;
     }
     const pr = game.progress;
-    if (pr && (game.mode === 'play' || game.mode === 'transition' || game.mode === 'dead') && !uiBlocking()) pr.playTime += dt;
+    // (a hardcore death stops the clock: the broken save holds the time of death)
+    if (pr && (game.mode === 'play' || game.mode === 'transition' || game.mode === 'dead') && !uiBlocking() &&
+      !(deathInfo && deathInfo.final)) pr.playTime += dt;
   };
 
   // Real-time driver: accumulates elapsed seconds into fixed steps (max 4 per frame), then renders.
@@ -1103,6 +1259,12 @@
         ctx.font = '42px Georgia, serif';
         ctx.fillText('Paused', W / 2, H / 2);
       }
+    } else if (fallbackGameOver) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#e9e4d8';
+      ctx.font = '36px Georgia, serif';
+      ctx.fillText('Your flame is spent.', W / 2, H / 2);
     } else if (fallbackEnding) {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
@@ -1118,9 +1280,11 @@
     get transition() { return trans; },
     get fallbackTitle() { return fallbackTitle; },
     get fallbackPaused() { return fallbackPaused; },
+    get fallbackGameOver() { return fallbackGameOver; },
+    get deathInfo() { return deathInfo; },
     set fallbackPaused(v) { fallbackPaused = !!v; },
     get bossMusic() { return bossMusic; },
-    migrate, startLocation,
+    migrate, startLocation, arenaInfo, gameOver,
   };
 
   G.game = game;

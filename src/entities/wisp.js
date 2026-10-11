@@ -2,6 +2,8 @@
 // player died, holding their cinders. Drifts toward the player within ~8 tiles, makes slow telegraphed
 // lunges (1 damage on contact); three hits burst it: cinders return (G.game.reclaimWisp), Ember capacity
 // is restored. Spawned by the engine as {type:'wisp', x, y, cinders} with x/y = the death spot's centre.
+// G.wispSpotFor(death) (bottom of this file) moves the wisp of a death in an unbeaten boss's arena to a safe spot
+// before the fight trigger or in the room before the arena (per-boss table, docs/api/interact.md).
 (function () {
   'use strict';
   const G = globalThis.G;
@@ -294,9 +296,64 @@
     if (!pr || !pr.wisp || H.flag('hint:wisp')) return;
     H.setFlag('hint:wisp');
     // one toast per sentence: a toast is a single line (cut off past ~560px), the hint is two sentences
-    const hint = String(H.text('ui.wispHint', 'Where you fell, your Gutterwisp lingers with your Cinders. Strike it to take them back.'));
+    const hint = String(H.text('ui.wispHint', 'Your Gutterwisp waits on the way back, holding your Cinders. Strike it to take them back.'));
     for (const line of hint.split(/(?<=[.!?])\s+/)) if (line) H.toast(line);
   }
   G.events.on('respawn', wispHintOnRespawn);
   Wisp.hintOnRespawn = wispHintOnRespawn;
+
+  // ---------------------------------------------------------------------------------------------------------
+  // Boss deaths: where the Gutterwisp waits instead of the arena floor (G.wispSpotFor, called by game.js when it
+  // creates progress.wisp). A wisp left inside a boss fight could only be reclaimed by re-triggering the fight,
+  // so a death in the arena of a boss that is not yet beaten moves it to a safe spot on the way back: either the
+  // arena's own entry side, OUTSIDE the trigger rect (only where that strip is deep enough: the wisp sits >= 10
+  // tiles from the trigger edge so the 3-hit reclaim, its lunges and the hit knockback never carry the player
+  // in), or the room before the arena, near the door to it. Spots are tiles (tx = column, ty = the EMPTY tile
+  // directly above the floor); see docs/api/interact.md for the per-boss reasoning.
+  // ---------------------------------------------------------------------------------------------------------
+  const WISP_SPOTS = {
+    // gw_05 entry strip (cols 51-62) is only 12 tiles deep -> gw_04 (shrine room, no enemies), west end by
+    // the door, west of the S1 drop: met right after jumping the drop, on the way from gw_sconce_a.
+    effigy:     { arena: 'gw_05', room: 'gw_04', tx: 8, ty: 14 },
+    // mb_07: 22-tile strip east of the trigger (cols 41-62) -> inside the Lawn, 12.5 tiles clear of it.
+    sable1:     { arena: 'mb_07', room: 'mb_07', tx: 53, ty: 14 },
+    // sf_05: the only non-trigger ground is the 5-tile west ledge above the den (a knock off it lands in the
+    // trigger) -> sf_02 Great Flue floor between sf_sconce_b and the E4 door.
+    matron:     { arena: 'sf_05', room: 'sf_02', tx: 25, ty: 77 },
+    // dn_07: 14-tile strip west of the trigger (cols 3-16) -> inside the Belfry, 10.5 tiles clear of it, past the
+    // open arena gate (col 2), on the clean floor (no hazards before the fight).
+    tallowmere: { arena: 'dn_07', room: 'dn_07', tx: 6, ty: 23 },
+    // ch_09: only 7 tiles before the trigger -> ch_08 upper ledge by the furnace door (E1), out of reach of the
+    // ladle brute on the floor 9 tiles below.
+    kilnmother: { arena: 'ch_09', room: 'ch_08', tx: 58, ty: 14 },
+    // mw_04: only 7 tiles before the trigger -> mw_06. Near the bower door once the moth knight (mw_u1,
+    // persistent) is slain; while it lives, short of its notice range (|x - home| < 9 tiles of col 55),
+    // just east of mw_sconce_b.
+    vespertine: { arena: 'mw_04', room: 'mw_06', tx: 58, ty: 23, alt: { unless: 'dead:mw_u1', tx: 44, ty: 23 } },
+    // ri_07: same layout as mb_07 -> inside, 12.5 tiles east of the trigger.
+    sable2:     { arena: 'ri_07', room: 'ri_07', tx: 53, ty: 14 },
+    // hs_03: 9 tiles before the trigger -> hs_02 open hall before the low passage to the arena (no enemies).
+    lucerne:    { arena: 'hs_03', room: 'hs_02', tx: 33, ty: 14 },
+  };
+  const ARENA_BOSS = {};
+  for (const id in WISP_SPOTS) ARENA_BOSS[WISP_SPOTS[id].arena] = id;
+
+  function bossBeaten(id) {
+    return !!(G.game && typeof G.game.bossDefeated === 'function' && G.game.bossDefeated(id));
+  }
+  /** death = {room, x, y, arenaActive, bossId} (px, room-local) → {room, x, y} (px, centre) or null = keep. */
+  function wispSpotFor(death) {
+    if (!death || typeof death.room !== 'string') return null;
+    const id = WISP_SPOTS[death.bossId] && WISP_SPOTS[death.bossId].arena === death.room ? death.bossId : ARENA_BOSS[death.room];
+    const s = id && WISP_SPOTS[id];
+    if (!s || bossBeaten(id)) return null;     // not a boss arena, or the boss is already beaten: normal behaviour
+    const w = G.World && typeof G.World.getRoom === 'function' ? G.World.getRoom(s.room) : null;
+    if (!w) return null;                       // (stripped / test worlds)
+    let tx = s.tx, ty = s.ty;
+    if (s.alt && !(H.flag && H.flag(s.alt.unless))) { tx = s.alt.tx; ty = s.alt.ty; }
+    // the centre of a standing player on that tile (what game.js stores for a death spot)
+    return { room: s.room, x: (tx + 0.5) * TILE, y: (ty + 1) * TILE - G.CONST.PLAYER_H / 2 };
+  }
+  wispSpotFor.SPOTS = WISP_SPOTS;
+  G.wispSpotFor = wispSpotFor;
 })();

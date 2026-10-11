@@ -38,6 +38,11 @@
     G.Art.flame(ctx, x, y, s, kind, t, seed, o);
   };
   const light = (o) => { if (G.lighting) G.lighting.add(o); };
+  // Difficulty modes: EXPLICIT telegraphs (beam guide lines, the spike columns, the nova circle, the dive column, the
+  // sweep wedge, the pulse lanes) are drawn in full only while this is true (easy); a few are kept in a subtler form in
+  // standard / hardcore. Gameplay timing never depends on it. Per-attack decisions and the diegetic tells:
+  // docs/api/boss-lucerne.md "Telegraphs by mode".
+  const teleOn = () => (G.telegraphsOn ? G.telegraphsOn() : (!(G.game && G.game.telegraphs) || G.game.telegraphs() !== false));
   const playerOf = () => (G.game && G.game.player) || null;
 
   // ---------------------------------------------------------------------------------------------------------
@@ -1531,7 +1536,7 @@
           this.glide(A.mid, cy, dt, 300, 6);
           this.lwant({ eyes: 1, flare: 1, mouth: 0.9 }, 5);
           this.wedge = { x: this.cx, y: this.cy, base, max: NUM.SWEEP_MAX, k: sd.t / sd.dur, mode };
-          this.beam(this.cx, this.cy, base, sd.t > sd.dur - 0.3 ? 'lock' : 'guide', NUM.SWEEP_HALF);
+          this.beam(this.cx, this.cy, base, sd.t > sd.dur - 0.3 ? 'lock' : 'guide', NUM.SWEEP_HALF).sweep = true;
           if (sd.t >= sd.dur) { this.sub('sweep'); sfx('lucerne_sweep', this.cx, { vol: 1 }); if (G.game) G.game.shake(5, 0.3); }
           break;
         }
@@ -1844,16 +1849,18 @@
         }
       }
       // sweep wedge (the area the lasers will cover)
-      if (this.wedge) this.drawWedge(ctx, t, this.wedge);
+      const tele = teleOn();
+      if (this.wedge) this.drawWedge(ctx, t, this.wedge, tele);
       // pulse lanes (safe dark corridors of the next ring)
-      for (const L of this.lanes) this.drawLanes(ctx, t, L);
+      for (const L of this.lanes) this.drawLanes(ctx, t, L, tele);
       // hazards
       for (const h of this.hz) {
         if (h.kind === 'spike') this.drawSpike(ctx, t, h);
         else if (h.kind === 'ring' && h.t >= 0) this.drawRing(ctx, t, h);
       }
       // dive column
-      if (this.column) {
+      if (this.column && !tele) this.drawDiveTell(ctx, t, this.column);
+      else if (this.column) {
         const c = this.column, w = NUM.DIVE_COL;
         ctx.save();
         const a = c.falling ? 0.5 : (c.locked ? 0.42 + 0.18 * Math.sin(t * 40) : 0.14 + 0.12 * c.k);
@@ -1870,9 +1877,11 @@
         const n = this.nova;
         ctx.save();
         if (n.mode === 'tele') {
-          ctx.strokeStyle = 'rgba(255,240,200,' + (0.25 + 0.5 * n.k).toFixed(3) + ')'; ctx.lineWidth = 2 + 2 * n.k;
-          ctx.setLineDash([10, 8]); ctx.lineDashOffset = -t * 60;
-          ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+          if (tele) {   // the blast radius (easy only; standard: the light gathering into her is the tell)
+            ctx.strokeStyle = 'rgba(255,240,200,' + (0.25 + 0.5 * n.k).toFixed(3) + ')'; ctx.lineWidth = 2 + 2 * n.k;
+            ctx.setLineDash([10, 8]); ctx.lineDashOffset = -t * 60;
+            ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+          }
           glow(ctx, n.x, n.y, 60 + 40 * n.k, '#ffffff', 0.4 + 0.5 * n.k);
           for (let i = 0; i < 6; i++) { const a = i * TAU / 6 + t * 2, r = n.r * (1 - n.k); glow(ctx, n.x + Math.cos(a) * r, n.y + Math.sin(a) * r, 12, '#fff2c8', 0.8); }
         } else {
@@ -1886,9 +1895,27 @@
         ctx.restore();
       }
       // beams
-      for (const b of this.beams) this.drawBeam(ctx, t, b);
+      for (const b of this.beams) this.drawBeam(ctx, t, b, tele);
     }
-    drawBeam(ctx, t, b) {
+    /** Standard / hardcore dive tell (diegetic, replaces the light column): she hangs above the player with her light
+     *  swelling and shedding sparks downward; at the lock (0.5 s before the fall, with the 'lucerne_lock' chime) she
+     *  flares white. */
+    drawDiveTell(ctx, t, c) {
+      if (c.falling) return;
+      const y = this.cy, k = c.k || 0;
+      glow(ctx, this.cx, y, 60 + 50 * k, '#fff2c8', 0.3 + 0.35 * k);
+      if (c.locked) glow(ctx, this.cx, y, 46, '#ffffff', 0.55 + 0.3 * Math.abs(Math.sin(t * 30)));
+      ctx.save();
+      for (let i = 0; i < 6; i++) {   // sparks dripping from her hem
+        const q = (t * 1.6 + i * 0.167) % 1;
+        ctx.fillStyle = 'rgba(255,242,200,' + ((0.3 + 0.5 * k) * (1 - q)).toFixed(3) + ')';
+        ctx.fillRect(this.cx + Math.sin(i * 2.3 + this.seed) * 16 - 1, this.feetY + q * 70, 2, 4);
+      }
+      ctx.restore();
+      light({ x: this.cx, y: this.cy, r: 120 + 60 * k, color: '#fff2c8', intensity: 0.25 + 0.3 * k });
+    }
+    drawBeam(ctx, t, b, tele) {
+      if (tele === false && (b.mode === 'guide' || b.mode === 'lock')) { this.drawBeamSubtle(ctx, t, b); return; }
       ctx.save();
       ctx.lineCap = 'round';
       if (b.mode === 'guide' || b.mode === 'lock') {
@@ -1918,7 +1945,22 @@
       }
       ctx.restore();
     }
-    drawWedge(ctx, t, w) {
+    /** Standard / hardcore beam tell: the light gathering at the staff / heart (on the attacker) through the whole
+     *  wind-up; the tracking guide is gone. KEPT-SUBTLE: the locked lance's line (lances only, not the sweep) as a
+     *  thin faint line for the 0.45-s lock — see the docs for why. */
+    drawBeamSubtle(ctx, t, b) {
+      const lock = b.mode === 'lock';
+      if (lock && !b.sweep) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = 'rgba(255,226,150,' + (0.42 + 0.14 * Math.abs(Math.sin(t * 26))).toFixed(3) + ')'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(b.x0, b.y0); ctx.lineTo(b.x1, b.y1); ctx.stroke();
+        ctx.restore();
+      }
+      glow(ctx, b.x0, b.y0, lock ? 50 : 34, '#fff2c8', lock ? 0.95 : 0.55 + 0.2 * Math.abs(Math.sin(t * 12)));
+      if (lock) glow(ctx, b.x0, b.y0, 20, '#ffffff', 0.9);
+    }
+    drawWedge(ctx, t, w, tele) {
       const room = this.room;
       ctx.save();
       const steps = 22;
@@ -1928,6 +1970,16 @@
           const a = w.base + sgn * (w.max * i / steps) * (w.mode === 'down' ? 1 : -1);
           pts.push([a, castLen(room, w.x, w.y, a, 2600)]);
         }
+      }
+      if (tele === false) {
+        // KEPT-SUBTLE (standard / hardcore): no tinted area, only the two outer edges (where the lasers stop) as
+        // thin faint lines — the safe horizon of a 2-damage sweep cannot be read from the heart alone
+        ctx.strokeStyle = 'rgba(255,236,180,' + (0.36 + 0.14 * Math.abs(Math.sin(t * 8))).toFixed(3) + ')'; ctx.lineWidth = 2;
+        ctx.setLineDash([6, 12]); ctx.lineDashOffset = t * 80;
+        for (const h of [0, 1]) { const [a, L] = pts[h * (steps + 1) + steps]; ctx.beginPath(); ctx.moveTo(w.x, w.y); ctx.lineTo(w.x + Math.cos(a) * L, w.y + Math.sin(a) * L); ctx.stroke(); }
+        ctx.setLineDash([]);
+        ctx.restore();
+        return;
       }
       // fill both halves (tinted area that will be swept)
       const alpha = (w.th == null ? 0.05 + 0.1 * w.k : 0.08);
@@ -1944,12 +1996,21 @@
       ctx.setLineDash([]);
       ctx.restore();
     }
-    drawLanes(ctx, t, L) {
+    drawLanes(ctx, t, L, tele) {
       const A = this.A, cx = A.mid, cy = A.floorY - NUM.PULSE_H, room = this.room;
       ctx.save();
       for (const g of L.gaps) {
         const a0 = g - NUM.GAP / 2, a1 = g + NUM.GAP / 2;
         const l0 = castLen(room, cx, cy, a0, 2400), l1 = castLen(room, cx, cy, a1, 2400), lm = castLen(room, cx, cy, g, 2400);
+        if (tele === false) {
+          // KEPT-SUBTLE (standard / hardcore): the dark corridor of each gap with thin faint solid edges; no dashes,
+          // no floor marker, no lights — in the pulse's near-darkness the rings' gaps cannot be extrapolated in time
+          ctx.fillStyle = 'rgba(8,6,20,' + (0.2 + 0.15 * L.k).toFixed(3) + ')';
+          ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a0) * l0, cy + Math.sin(a0) * l0); ctx.lineTo(cx + Math.cos(g) * lm, cy + Math.sin(g) * lm); ctx.lineTo(cx + Math.cos(a1) * l1, cy + Math.sin(a1) * l1); ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = 'rgba(255,232,170,' + (0.3 + 0.2 * L.k).toFixed(3) + ')'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a0) * l0, cy + Math.sin(a0) * l0); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a1) * l1, cy + Math.sin(a1) * l1); ctx.stroke();
+          continue;
+        }
         ctx.fillStyle = 'rgba(8,6,20,' + (0.25 + 0.2 * L.k).toFixed(3) + ')';
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a0) * l0, cy + Math.sin(a0) * l0); ctx.lineTo(cx + Math.cos(g) * lm, cy + Math.sin(g) * lm); ctx.lineTo(cx + Math.cos(a1) * l1, cy + Math.sin(a1) * l1); ctx.closePath(); ctx.fill();
         ctx.strokeStyle = 'rgba(255,232,170,' + (0.55 + 0.4 * L.k).toFixed(3) + ')'; ctx.lineWidth = 3;
@@ -1994,14 +2055,17 @@
         const a = 0.55 + 0.4 * k + 0.1 * Math.sin(t * 30);
         const hw = W * 0.62;
         glow(ctx, x, y - 4, W * (0.8 + 0.6 * k), '#fff0c0', 0.5 + 0.4 * k);
-        // the column the spike will fill: faint fill + bright edges fading upward
-        const gr = ctx.createLinearGradient(0, y, 0, y - NUM.SPIKE_H);
-        gr.addColorStop(0, 'rgba(255,240,200,' + (0.26 + 0.38 * k).toFixed(3) + ')');
-        gr.addColorStop(1, 'rgba(255,240,200,0)');
-        ctx.fillStyle = gr;
-        ctx.fillRect(x - W / 2 + 6, y - NUM.SPIKE_H, W - 12, NUM.SPIKE_H);
-        ctx.fillRect(x - W / 2 + 6, y - NUM.SPIKE_H, 2, NUM.SPIKE_H);
-        ctx.fillRect(x + W / 2 - 8, y - NUM.SPIKE_H, 2, NUM.SPIKE_H);
+        // the column the spike will fill: faint fill + bright edges fading upward (easy only; standard keeps the
+        // fissure, the crystal tips pushing through, the sparks and the crack's glow — diegetic precursors)
+        if (teleOn()) {
+          const gr = ctx.createLinearGradient(0, y, 0, y - NUM.SPIKE_H);
+          gr.addColorStop(0, 'rgba(255,240,200,' + (0.26 + 0.38 * k).toFixed(3) + ')');
+          gr.addColorStop(1, 'rgba(255,240,200,0)');
+          ctx.fillStyle = gr;
+          ctx.fillRect(x - W / 2 + 6, y - NUM.SPIKE_H, W - 12, NUM.SPIKE_H);
+          ctx.fillRect(x - W / 2 + 6, y - NUM.SPIKE_H, 2, NUM.SPIKE_H);
+          ctx.fillRect(x + W / 2 - 8, y - NUM.SPIKE_H, 2, NUM.SPIKE_H);
+        }
         // fissure (cut into the surface)
         ctx.beginPath(); ctx.moveTo(x - hw, y);
         for (let i = 1; i < 8; i++) ctx.lineTo(x - hw + i * hw / 4, y + 2 + ((i * 5 + h.seed * 3) % 4));

@@ -15,11 +15,13 @@ as `(G.Text && G.Text.ui && G.Text.ui.resume) || 'Resume'` are fine for robustne
 
 ## 1. Conventions
 
-**Input tokens** (TECH_SPEC §15): `{jump} {attack} {dash} {spell} {up} {down} {map} {inventory}`.
-They appear in `lore_sh_1..3`, `abilities.*.how`, one Quill line, and `ui.controlTips`. The UI
-replaces them with `G.input.label(action)`.
+**Input tokens** (TECH_SPEC §15): `{jump} {attack} {dash} {spell} {up} {down} {interact} {map} {inventory}`
+(`{left} {right} {pause}` are also accepted). They appear in `lore_sh_1..3`, `abilities.*.how`, one Quill
+line, and `ui.controlTips`. The UI replaces them with `G.input.label(action)`, which follows the player's
+current bindings (controls are rebindable) and last-used device. Use `{interact}` (not `{up}`) for
+rest/read/talk/travel: Up and Interact are separate, separately rebindable actions.
 
-**Format placeholders** (only in `ui.*`): `{n} {used} {total} {price} {glass} {region}`. Fill them
+**Format placeholders** (only in `ui.*`): `{n} {used} {total} {price} {glass} {region}`, and `{action} {input} {other}` in the rebinding notes. Fill them
 with the helper, which leaves anything it has no value for (e.g. input tokens) untouched:
 
 ```js
@@ -37,6 +39,17 @@ matters; honor it.
 Pages starting with `(` are stage directions or descriptions of the object (e.g. `"(Scratched beneath,
 smaller:) ..."`). Showing them in a dimmer or italic style looks good but is optional.
 
+**No soul/damage numbers** (user request; Hollow Knight never shows nail damage or soul amounts): no
+string may state an Ember amount, a damage figure, a health number, a percentage, a `+N`/`-N` modifier, a
+multiplier or a `5 -> 9` comparison. Abilities, sigils and upgrades say what they do in words ("Your spells
+burn far hotter.", "Your Ember Well holds more.", "spending some of your Ember"); in `abilities`, `items`,
+`sigils` and `shops` no digit appears at all. The exact values live in `G.Items` / DESIGN §3.5 only. The UI
+follows suit: health is drawn as candles, the Ember Well as a vessel, sigil notch costs as diamond pips, the
+Brand by name only. Cinders (currency), prices, item counts and lore dates are not stat numbers and stay.
+`tools/text_check.js` enforces this permanently (`numericStat()`; its `NUMERIC_ALLOW` map is the documented
+allowlist for a legitimate non-stat number a pattern would catch, currently empty) and also scans `src/ui/*.js`
+for code that would draw Brand damage or numeric Ember/health.
+
 **Characters**: ASCII plus the em dash `—` (U+2014) only; files are UTF-8 (index.html declares
 `<meta charset="utf-8">`).
 
@@ -53,7 +66,7 @@ smaller:) ..."`). Showing them in a dimmer or italic style looks good but is opt
 | `sparks[id]` | `{title, lines[]}` | 6 Chandler memories. `title` is an extension (e.g. `'The Finding'`) |
 | `abilities[id]` | `{name, desc, how}` | `bolt dash grip oilcloak plunge wings`; `how` contains input tokens |
 | `items[id]` | `{name, desc}` | `heartwax urn kiln_glass notch spark seal_bell seal_kiln seal_wing chart` |
-| `sigils[id]` | `{name, desc}` | All 14. `desc` = flavor + the exact effect. Same key order as `G.Items.sigils` |
+| `sigils[id]` | `{name, desc}` | All 14. `desc` = flavor + the effect in plain words (no numbers, see below). Same key order as `G.Items.sigils` |
 | `bosses[id]` | `{name, sub, intro?, phase2?, defeat?}` | See §5 |
 | `endings[id]` | `{title, pages[8], scenes[8]}` | `undying`, `gutterlight`, see §6 |
 | `credits` | `string[]` | One line per entry; `''` = blank spacer line; first entry is the title |
@@ -229,7 +242,7 @@ glass and gold), `ash` (warm ash, new wax). The credits roll afterwards; it incl
 
 ```js
 shops.pell  = { greet, bought, poor, empty, farewell }
-shops.quill = { greet, bought, poor, empty, farewell }
+shops.quill = { greet, bought, poor, empty, unwalked, farewell }   // unwalked: has charts, but none of a region the player has entered
 shops.bramm = { greet, bought, poor, empty, farewell,
                 noGlass,              // can afford the cinders but lacks Kiln Glass
                 maxed,                // Brand already at level 3 (same moment as `empty`)
@@ -247,15 +260,17 @@ Stock and prices come from `G.Items.shops` (see below). Names: `items[...]`, `si
 | Group | Keys |
 |---|---|
 | Title & common | `gameTitle tagline pressAny loading start newGame continue options controls credits back confirm cancel close next yes no` |
-| Save slots | `chooseSlot slot`(`{n}`) `slotEmpty slotNew slotComplete slotUnreadable erase eraseConfirm playTime completion` |
+| Save slots | `chooseSlot slot`(`{n}`) `slotEmpty slotNew slotComplete slotUnreadable erase eraseConfirm playTime completion slotSnuffed`(a broken Hardcore run) |
+| Trials (modes) | `chooseMode modeEasy modeStandard modeHardcore modeEasyDesc modeStandardDesc modeHardcoreDesc`(title chooser; looked up through a table in title.js) `hardcoreConfirm hardcoreBegin`(Hardcore confirmation) `gameOver gameOverSub`(Hardcore game-over screen, ending.js) |
 | Pause & options | `paused resume quitToTitle quitConfirm masterVolume musicVolume sfxVolume ambienceVolume screenShake controlHints fullscreen on off adjust`; `settings.{masterVolume musicVolume sfxVolume ambienceVolume shake hints}` = labels keyed exactly like `G.settings` (so `G.Text.ui.settings[key]` labels any setting) |
-| Controls screen | `keyboard gamepad`, `actions.{move left right up down jump attack dash spell interact map inventory pause confirm cancel}`, `controlTips[]` (input tokens) |
+| Controls screen | `keyboard gamepad`, `actions.{move left right up aimUp down jump attack dash spell interact map inventory pause confirm cancel}` (`aimUp` = the Up row of the rebinding table, Interact has its own row), `controlTips[]` (input tokens) |
+| Rebinding | `bindPrimary bindSecondary bindPress rebind clear resetControls resetControlsConfirm controlsReset controlsFallbackKey controlsFallbackPad bindCtrlWarn`; `capturePromptKey capturePromptKeyPad capturePromptPad capturePromptPadKey`(`{action}`) `bindLastPad`(`{action}`) `bindOsKey`(`{input}`) `bindMoved`(`{input} {action}`) `bindSwapped`(`{input} {action} {other}`) `bindLast`(`{action}`) `bindReserved`(`{input}`) `bindRefused bindNeedPad bindNeedKey` |
 | Prompts | `prompts.{rest read talk listen travel take examine light open shop}` |
 | Toasts & world | `saved saveFailed saveUnavailable saveConflict`(game.saveNow notices; saveConflict: another window wrote the slot) `sconceLit rested lanternwayLit gateOpened gateLocked sealDoorLocked sealDoorOpen sealDoorCount`(`{n}`) `wispReclaimed wispHint`(first death) `noEmber` |
 | Lanternway | `lanternway lanternwayChoose lanternwayHere lanternwayUnlit lanternwayDanger` (post names: `areas[id].name`) |
 | Map | `map mapUncharted mapEmpty mapPan zoom zoomOut recenter mapLegend.{you sconce lanternway shop npc relic wisp door}` |
-| Inventory | `inventory abilities relics sigils notches notchesUsed`(`{used} {total}`) `restToEquip equip unequip equipped notEnoughNotches health ember cinders brand heartShards urns kilnGlass sparks seals unknown notFound damage` |
-| Shops | `buy sold owned price leave priceCinders`(`{price}`) `priceGlass`(`{glass}`) `chartOf`(`{region}`) `temper` |
+| Inventory | `inventory abilities relics sigils notches notchesUsed`(`{used} {total}`) `restToEquip equip unequip equipped notEnoughNotches health ember cinders brand heartShards urns kilnGlass sparks seals sealsHeld`(`{n}`, item card) `heartwaxHalf heartwaxNone`(Heartwax relic line; no totals shown) `unknown notFound` (`damage` was removed: no Brand damage numbers are shown) |
+| Shops | `buy sold noChartsYet`(Quill's empty list while uncharted regions are still unknown) `owned price leave priceCinders`(`{price}`) `priceGlass`(`{glass}`) `chartOf`(`{region}`) `temper` |
 | Cards & ending | `acquired theEnd skip` |
 
 Notable exact strings: `ui.restToEquip` = `'Rest at a Sconce to change Sigils'`;

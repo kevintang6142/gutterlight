@@ -7,7 +7,7 @@
 // Loads both files in a bare node:vm context (no window/document => proves Node-loadability),
 // then checks: required keys & counts, schemas, condition grammar (TECH_SPEC §9.1), NPC fallbacks,
 // talk-id uniqueness, give/setFlag specs, page lengths (warn > 140, fail > 220), forbidden and
-// Hollow-Knight-associated terms, tokens/placeholders, punctuation hygiene, G.Items vs DESIGN
+// Hollow-Knight-associated terms, soul/damage numbers (none allowed), tokens/placeholders, punctuation hygiene, G.Items vs DESIGN
 // numbers and vs G.Text, and simulates NPC dialogue selection over a playthrough to prove every
 // one-shot talk is reachable. --transcript prints the simulated conversations.
 // Exit code: 0 = clean (warnings allowed), 1 = errors.
@@ -64,8 +64,8 @@ const SIGILS = Object.keys(SIGIL_COSTS);
 const ITEMS = ['heartwax', 'urn', 'kiln_glass', 'notch', 'spark', 'seal_bell', 'seal_kiln', 'seal_wing', 'chart'];
 const NPC_KEYS = ['thrum', 'pell', 'quill', 'bramm', 'wren_1', 'wren_2', 'wren_3', 'wren_4', 'sable_1', 'sable_2'];
 const SHOP_IDS = ['pell', 'quill', 'bramm'];
-const INPUT_TOKENS = ['jump', 'attack', 'dash', 'spell', 'up', 'down', 'map', 'inventory'];
-const PLACEHOLDERS = ['n', 'used', 'total', 'price', 'glass', 'region'];
+const INPUT_TOKENS = ['jump', 'attack', 'dash', 'spell', 'up', 'down', 'interact', 'map', 'inventory', 'left', 'right', 'pause'];
+const PLACEHOLDERS = ['n', 'used', 'total', 'price', 'glass', 'region', 'action', 'input', 'other'];
 const PELL_STOCK = [
   ['heartwax', 'shop_pell_hw1', 150], ['heartwax', 'shop_pell_hw2', 450], ['urn', 'shop_pell_urn', 350],
   ['notch', 'shop_pell_notch', 400], ['sigil', 'shop_pell_cinder_lure', 100, 'cinder_lure'],
@@ -339,9 +339,9 @@ if (isObj(T.sigils)) {
   for (const id of SIGILS) if (T.sigils[id]) { needStr(T.sigils[id], 'name', `sigils.${id}`); needStr(T.sigils[id], 'desc', `sigils.${id}`); }
   const names = SIGILS.map((id) => T.sigils[id] && T.sigils[id].name);
   if (new Set(names).size !== names.length) err('sigils: duplicate names');
-  // The descriptions must state the exact DESIGN §3.5 numbers.
-  const NUMS = { swift_brand: '30%', long_brand: '35%', kindle_haste: '40%', ember_thirst: '6', smolder_shell: '60%', flare_trail: '8 damage', bright_bolt: '50%', thorned_wax: '12 damage', last_light: '75%', deep_kindle: '65%' };
-  for (const [id, n] of Object.entries(NUMS)) if (T.sigils[id] && !T.sigils[id].desc.includes(n)) err(`sigils.${id}.desc must state '${n}'`);
+  // No numbers (user request, no-numbers): effects are described qualitatively, as Hollow Knight does. The exact
+  // values live in G.Items.sigils / DESIGN §3.5; the descriptions must not state them (see numericStat() below).
+  for (const id of SIGILS) if (T.sigils[id] && /\d/.test(String(T.sigils[id].desc))) err(`sigils.${id}.desc contains a digit (describe the effect in words)`);
 }
 
 // bosses
@@ -404,6 +404,45 @@ if (isObj(T.ui)) {
 }
 
 // ------------------------------------------------------------------------------------------------
+// No soul/damage numbers (permanent rule, user request): Hollow Knight never shows nail damage or soul amounts;
+// abilities, sigils and upgrades are described in words, health is drawn as candles and the Ember Well as a vessel.
+// Fails on: a number next to ember/soul/damage/dmg/health/hp/heal ('33 Ember', 'Ember 132', '9 damage', 'Health: 5'),
+// a spelled-out amount of Ember or damage ('thirty Ember'), percentages ('30%', 'percent'), signed modifiers ('+11',
+// '-30'), multipliers ('x2', '1.5x') and number arrows ('5 -> 9'). In abilities.*, items.*, sigils.* and shops.* no
+// digit may appear at all. Currency (Cinders), prices ({price} placeholders), item/seal counts and lore dates
+// ('Day 112', 'Warden Seals: {n} / 3') are NOT stat numbers and are not matched.
+// NUMERIC_ALLOW: where -> reason, for a legitimate non-stat number that a pattern would catch. Currently empty;
+// add an entry (exact path as printed by the error) only with a reason that is not a soul/damage/health value.
+const NUMERIC_ALLOW = {};
+const STAT_WORD = '(?:ember|soul|damage|dmg|health|hp|heal(?:s|ing|th)?)';
+const SPELLED = '(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fifteen|twenty|thirty|forty|fifty|sixty|hundred)';
+const NUMERIC_RULES = [
+  ['number + stat', new RegExp('\\b\\d+(?:\\.\\d+)?\\s*(?:more\\s+|extra\\s+|bonus\\s+)?' + STAT_WORD + '\\b', 'i')],
+  ['stat + number', new RegExp('\\b' + STAT_WORD + '\\s*[:=]?\\s*[+\\-]?\\d', 'i')],
+  ['spelled amount', new RegExp('\\b' + SPELLED + '(?:[\\s-]+' + SPELLED + ')*\\s+(?:more\\s+|extra\\s+)?(?:ember|soul|damage|dmg)\\b', 'i')],
+  ['percentage', /\d\s*%|\bper\s?cent\b/i],
+  ['signed modifier', /(^|[^\w])[+\-−]\s?\d/],
+  ['multiplier', /\b\d+(?:\.\d+)?\s*[x×](?![a-z])|(^|[^\w])[x×]\s?\d/i],
+  ['number arrow', /\d\s*(?:->|=>|→|>)\s*\d/],
+];
+function numericStat(s, where) {
+  if (NUMERIC_ALLOW[where]) return null;
+  for (const [name, re] of NUMERIC_RULES) if (re.test(s)) return name;
+  if (/^(abilities|items|sigils|shops)\./.test(where) && /\d/.test(s)) return 'digit in an ability/item/sigil/shop string';
+  return null;
+}
+// Self-test so a broken pattern cannot silently pass everything.
+for (const [s, where, bad] of [
+  ['Costs 33 Ember.', 'ui.x', true], ['+11 Ember', 'ui.x', true], ['+33 Ember capacity', 'ui.x', true], ['cooldown -30%', 'ui.x', true],
+  ['+50% damage', 'ui.x', true], ['9 damage', 'ui.x', true], ['Ember 132', 'ui.x', true], ['Brand 1/3 . 9 damage', 'ui.x', true],
+  ['5 -> 9 damage', 'ui.x', true], ['Health: 6', 'ui.x', true], ['heals 2x', 'ui.x', true], ['thirty-three Ember', 'ui.x', true],
+  ['draws 6 more Ember', 'ui.x', true], ['restores 2 health', 'ui.x', true], ['Level 2', 'items.brand.levels[1].desc', true],
+  ['Your spells burn far hotter.', 'sigils.x.desc', false], ['Warden Seals: {n} / 3', 'ui.sealDoorCount', false],
+  ['Day 112 since the Lantern was lit.', 'lore.x.lines[0]', false], ['{price} Cinders', 'ui.priceCinders', false],
+  ['Two shards fuse into a new candle of health.', 'items.heartwax.desc', false], ['one more candle of health', 'sigils.x.desc', false],
+]) if (!!numericStat(s, where) !== bad) err(`[self-test] numericStat('${s}' @ ${where}) should be ${bad ? 'flagged' : 'clean'}`);
+
+// ------------------------------------------------------------------------------------------------
 // 2. Every player-facing string: length, terms, tokens, punctuation
 const NON_TEXT_KEYS = new Set(['id', 'when', 'give', 'setFlag', 'shop', 'scenes', 'once']);
 let stringCount = 0, charCount = 0, longest = { len: 0, where: '' };
@@ -433,6 +472,8 @@ function checkString(s, where) {
   if ((s.match(/"/g) || []).length % 2) err(`${where}: unbalanced double quotes`);
   if ((s.match(/\(/g) || []).length !== (s.match(/\)/g) || []).length) err(`${where}: unbalanced parentheses`);
   for (const [name, re] of FORBIDDEN) if (re.test(s)) err(`${where}: forbidden term '${name}': "${s}"`);
+  const num = numericStat(s, where);
+  if (num) err(`${where}: shows a soul/damage number (${num}); describe it in words: "${s}"`);
   for (const [name, re] of AVOID) {
     if (!re.test(s)) continue;
     if ((AVOID_EXCEPT[where] || []).includes(name)) continue;
@@ -451,6 +492,8 @@ function checkString(s, where) {
     if (PLACEHOLDERS.includes(tok) && inUi) continue;
     err(`${where}: unknown token {${tok}}`);
   }
+  // Up and Interact are separately rebindable: rest/read/talk/travel prompts must name {interact}, not {up}.
+  if (/\{up\}[^.]{0,20}\b(rest|read|talk|travel|shop|open)\b/i.test(s)) err(`${where}: use {interact} (not {up}) for rest/read/talk/travel`);
   // Sentence-final punctuation for prose pages (not titles/labels).
   const prose = /^(intro|npcs\.[^.]+\.talks|lore\.[^.]+\.lines|sparks\.[^.]+\.lines|endings\.[^.]+\.pages|bosses\.[^.]+\.(intro|phase2|defeat))/.test(where);
   // Verse may end a page on ';' and quoted speech on a closing quote; graffiti and signatures
@@ -461,6 +504,25 @@ function checkString(s, where) {
   }
 }
 walk(T, '');
+
+// The UI must not rebuild damage/Ember numbers from data either: no 'ui.damage' suffix key, and no src/ui code that
+// draws the Brand's damage (`.dmg`, G.Items.brandDamage) or G.game.emberMax()/maxHealth() as text.
+if (isObj(T.ui) && T.ui.damage !== undefined) err("ui.damage exists: Brand damage numbers are not shown (no-numbers)");
+{
+  const uiDir = path.join(ROOT, 'src', 'ui');
+  const NUM_UI = [
+    [/ui\.damage/, "'ui.damage' suffix"],
+    [/\.dmg\b/, 'Brand damage value (.dmg)'],
+    [/brandDamage/, 'G.Items.brandDamage'],
+    [/String\(\s*G\.game\.(?:emberMax|maxHealth)\(\)\s*\)/, 'numeric Ember/health readout'],
+  ];
+  if (fs.existsSync(uiDir)) for (const f of fs.readdirSync(uiDir).filter((x) => x.endsWith('.js'))) {
+    fs.readFileSync(path.join(uiDir, f), 'utf8').split('\n').forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line)) return;
+      for (const [re, what] of NUM_UI) if (re.test(line)) err(`src/ui/${f}:${i + 1}: ${what} (no soul/damage numbers in the UI)`);
+    });
+  }
+}
 
 // ------------------------------------------------------------------------------------------------
 // 2b. The API doc must mention every ui key, lore id, npc key, sigil and shop-extra key.
@@ -669,6 +731,18 @@ if (isObj(T.npcs) && NPC_KEYS.every((k) => T.npcs[k] && Array.isArray(T.npcs[k].
     }
   }
 }
+
+// ------------------------------------------------------------------------------------------------
+// No spoilers (modes-fix-text): control labels must not name an ability the player may not have found yet, and the
+// first-death wisp hint must not say the wisp is "where you fell" (after a boss death it waits outside the arena).
+if (isObj(T.ui) && isObj(T.ui.actions)) {
+  const abilityNames = isObj(T.abilities) ? Object.values(T.abilities).map((a) => a && a.name).filter(Boolean) : [];
+  for (const [k, v] of Object.entries(T.ui.actions)) {
+    const n = abilityNames.find((x) => String(v).includes(x));
+    if (n) err(`ui.actions.${k} names the ability "${n}" (a spoiler on the Controls screen): ${v}`);
+  }
+}
+if (isObj(T.ui) && /where you fell/i.test(String(T.ui.wispHint || ''))) err('ui.wispHint says "where you fell"; after a boss death the Gutterwisp waits outside the arena');
 
 // ------------------------------------------------------------------------------------------------
 // Report

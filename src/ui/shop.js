@@ -1,8 +1,8 @@
 // src/ui/shop.js — shops and the Lanternway menu.
 //   Pell  : stock from G.Items.shops.pell; buy → G.game.giveItem(entry.give, {pickupId}) (flag item:<id>, sold rows vanish)
-//   Quill : charts → G.game.giveItem('chart:<region>') (progress.charts[region] = true)
+//   Quill : charts of known regions only (entered or a room visited; no spoilers) → G.game.giveItem('chart:<region>') (progress.charts[region] = true)
 //   Bramm : Brand upgrade (current → next damage; cinders + Kiln Glass, glass is consumed) → giveItem('brand')
-//   Lanternway: lit posts by region name, current marked, travel with G.game.travel(id)
+//   Lanternway: lit posts only (unlit ones are not listed), by region name, current marked, travel with G.game.travel(id)
 (function () {
   'use strict';
   const G = globalThis.G;
@@ -23,21 +23,44 @@
     const p = P();
     return stock('pell').filter((e) => !(p && p.flags && p.flags['item:' + e.id])).map((e) => {
       const give = e.give || (e.item === 'sigil' ? 'sigil:' + e.sigil : e.item);
-      let name, desc, extra = '';
+      let name, desc, extra = '', notches = 0;
       if (e.item === 'sigil') {
         name = UI.text('sigils.' + e.sigil + '.name', e.sigil);
         desc = UI.text('sigils.' + e.sigil + '.desc', '');
-        extra = UI.text('ui.notches', 'Notches') + ': ' + (UI.sigilCost ? UI.sigilCost(e.sigil) : 1);
+        notches = UI.sigilCost ? UI.sigilCost(e.sigil) : 1; // drawn as pips, never a number
       } else {
         name = UI.text('items.' + e.item + '.name', e.item);
         desc = UI.text('items.' + e.item + '.desc', '');
       }
-      return { entry: e, give, name, desc, extra, price: e.price | 0, glass: 0 };
+      return { entry: e, give, name, desc, extra, notches, price: e.price | 0, glass: 0 };
     });
   }
+  // Quill only offers charts of regions the player knows (no spoilers, like Iselda): a region is known once it has
+  // been entered (flags['region:<id>'], set by G.game on region change) or any of its rooms is in progress.visited.
+  // A partly explored region still has a chart worth buying ("Buy what I've walked, then walk what I haven't").
+  function knownRegions(p) {
+    const known = {};
+    if (!p) return known;
+    const f = p.flags || {};
+    for (const k in f) if (f[k] && k.indexOf('region:') === 0) known[k.slice(7)] = true;
+    for (const id in (p.visited || {})) if (p.visited[id]) { const r = UI.regionOfRoom(id); if (r) known[r] = true; }
+    return known;
+  }
+  function quillUnsold(p, e) { return !(p && ((p.charts && p.charts[e.region]) || (p.flags && p.flags['item:' + e.id]))); }
+  /** True when Quill still has charts the player cannot see yet (regions not yet known). */
+  function quillPending() {
+    const p = P(), known = knownRegions(p);
+    return stock('quill').some((e) => quillUnsold(p, e) && !known[e.region]);
+  }
+  /** Speech when a shop has no rows: Quill with unseen regions left says "go explore", not "that's all of them". */
+  function emptySpeech(shopId) {
+    if (shopId === 'bramm') return shopText('bramm', 'maxed', shopText('bramm', 'empty'));
+    if (shopId === 'quill' && quillPending()) return shopText('quill', 'unwalked', "Hm-hm... Nothing I've drawn touches anywhere you've been. Go find an edge, then come back for its chart.");
+    return shopText(shopId, 'empty');
+  }
   function quillRows() {
-    const p = P();
-    return stock('quill').filter((e) => !(p && ((p.charts && p.charts[e.region]) || (p.flags && p.flags['item:' + e.id])))).map((e) => ({
+    const p = P(), known = knownRegions(p);
+    return stock('quill').filter((e) => quillUnsold(p, e) && known[e.region]).map((e) => ({
       entry: e, give: 'chart:' + e.region,
       name: UI.fmt(UI.text('ui.chartOf', 'Chart: {region}'), { region: UI.regionName(e.region) }),
       desc: UI.text('items.chart.desc', ''), extra: '', price: e.price | 0, glass: 0, region: e.region,
@@ -68,7 +91,7 @@
     const initialRows = rowsFn();
     return UI.push({
       name: 'shop', shopId, fadeIn: 0.22, fadeOut: 0.2, hideHud: true, sel: 0, scroll: 0, onClose: onDone,
-      speech: initialRows.length ? shopText(shopId, 'greet') : (shopId === 'bramm' ? shopText('bramm', 'maxed', shopText('bramm', 'empty')) : shopText(shopId, 'empty')),
+      speech: initialRows.length ? shopText(shopId, 'greet') : emptySpeech(shopId),
       speechT: 0, cinderPulse: 0, busy: false,
       say(text) { if (text) { this.speech = text; this.speechT = 0; } },
       update(dt, active) {
@@ -77,7 +100,7 @@
         const rows = rowsFn();
         if (this.sel >= rows.length) this.sel = Math.max(0, rows.length - 1);
         if (!active || this.busy) return;
-        if (UI.pressedAny(['cancel', 'pause'])) { UI.sfx('menu_back'); this.say(shopText(shopId, 'farewell')); UI.close(this); return; }
+        if (UI.pressedClose(['cancel', 'pause'])) { UI.sfx('menu_back'); this.say(shopText(shopId, 'farewell')); UI.close(this); return; }
         const dy = UI.navY();
         if (dy && rows.length > 1) { this.sel = (this.sel + dy + rows.length) % rows.length; UI.sfx('menu_move'); }
         if (UI.pressedAny(UI.CONFIRM)) {
@@ -120,7 +143,7 @@
           G.game.giveItem(row.give, { pickupId: e.id });
           this.say(shopText('pell', 'bought'));
         }
-        if (!rowsFn().length) this.say(shopId === 'bramm' ? shopText('bramm', 'maxed', shopText('bramm', 'empty')) : shopText(shopId, 'empty'));
+        if (!rowsFn().length) this.say(emptySpeech(shopId));
       },
       draw(ctx, a) { drawShop(ctx, this, rowsFn(), keeper); },
     });
@@ -169,7 +192,8 @@
     if (!rows.length) {
       ctx.font = UI.font(21, 'italic');
       ctx.fillStyle = C.dim;
-      ctx.fillText(s.shopId === 'bramm' ? UI.brandLevelInfo(3).name : UI.text('ui.sold', 'Sold'), lx + lw / 2, listTop + 120);
+      ctx.fillText(s.shopId === 'bramm' ? UI.brandLevelInfo(3).name
+        : (s.shopId === 'quill' && quillPending() ? UI.text('ui.noChartsYet', 'Nothing yet') : UI.text('ui.sold', 'Sold')), lx + lw / 2, listTop + 120);
     }
     for (let i = s.scroll; i < Math.min(rows.length, s.scroll + maxRows); i++) {
       const r = rows[i];
@@ -231,6 +255,18 @@
         ctx.textAlign = 'center';
         ctx.fillText(r.extra, rx + rw / 2, ry + rh - 96);
       }
+      if (r.notches > 0 && UI.notchCost) {
+        // the sigil's notch cost: a dim label and diamond pips, centered (no number)
+        const label = UI.text('ui.notches', 'Notches');
+        ctx.font = UI.font(17, 'italic');
+        const lw = ctx.measureText(label).width, tw = lw + 12 + r.notches * 16;
+        const x0 = rx + rw / 2 - tw / 2, y0 = ry + rh - 96;
+        ctx.fillStyle = C.goldDim;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x0, y0);
+        UI.notchCost(ctx, x0 + lw + 12, y0, r.notches, 'left');
+      }
       drawPrice(ctx, rx + rw / 2 - 30, ry + rh - 56, r.price, r.glass, p, 'left', 24);
     }
     // speech
@@ -268,39 +304,31 @@
       ctx.font = UI.font(20);
       ctx.fillStyle = C.creamDim;
       UI.paragraph(ctx, cur.desc, cx, ry + 300, rw - 90, 28, 'center');
-      ctx.font = UI.font(22);
-      ctx.fillStyle = C.gold;
-      ctx.textAlign = 'center';
-      ctx.fillText(cur.dmg + ' ' + UI.text('ui.damage', 'damage'), cx, ry + 400);
       return;
     }
     ctx.font = UI.font(28);
     ctx.fillStyle = C.cream;
     ctx.fillText(r.name, cx, ry + 222);
     UI.flourish(ctx, cx, ry + 252, 120, { alpha: 0.4 });
-    // current → next
-    const y = ry + 312;
+    // current → next: the two Brands by name, the next one brighter (no damage numbers, as in Hollow Knight)
+    const y = ry + 316;
+    UI.icons.item(ctx, 'brand', cx - 130, y - 4, 40, { t, dim: true });
+    UI.glow(ctx, cx + 130, y - 4, 42, '#ff8a3c', 0.16);
+    UI.icons.item(ctx, 'brand', cx + 130, y - 4, 48, { t });
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     ctx.font = UI.font(21);
     ctx.fillStyle = C.creamDim;
-    ctx.fillText(r.from.name, cx - 130, y);
-    ctx.fillStyle = C.cream;
-    ctx.fillText(r.to.name, cx + 130, y);
-    ctx.font = UI.font(34);
-    ctx.fillStyle = C.creamDim;
-    ctx.fillText(String(r.from.dmg), cx - 130, y + 44);
+    ctx.fillText(r.from.name, cx - 130, y + 40);
     ctx.fillStyle = C.gold;
-    ctx.fillText(String(r.to.dmg), cx + 130, y + 44);
-    ctx.font = UI.font(15, 'italic');
-    ctx.fillStyle = C.dim;
-    ctx.fillText(UI.text('ui.damage', 'damage'), cx - 130, y + 74);
-    ctx.fillText(UI.text('ui.damage', 'damage'), cx + 130, y + 74);
+    ctx.fillText(r.to.name, cx + 130, y + 40);
     // arrow
     ctx.strokeStyle = C.creamDim;
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(cx - 30, y + 30); ctx.lineTo(cx + 30, y + 30); ctx.lineTo(cx + 22, y + 24); ctx.moveTo(cx + 30, y + 30); ctx.lineTo(cx + 22, y + 36); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - 30, y - 4); ctx.lineTo(cx + 30, y - 4); ctx.lineTo(cx + 22, y - 10); ctx.moveTo(cx + 30, y - 4); ctx.lineTo(cx + 22, y + 2); ctx.stroke();
     ctx.font = UI.font(18, 'italic');
     ctx.fillStyle = C.creamDim;
-    UI.paragraph(ctx, r.desc, cx, y + 120, rw - 100, 24, 'center');
+    UI.paragraph(ctx, r.desc, cx, y + 100, rw - 100, 24, 'center');
     drawPrice(ctx, cx - 50, ry + 504, r.price, r.glass, p, 'left', 24);
   }
 
@@ -343,7 +371,7 @@
       },
       update(dt, active) {
         if (!active) return;
-        if (UI.pressedAny(['cancel', 'pause'])) { UI.sfx('menu_back'); UI.close(this); return; }
+        if (UI.pressedClose(['cancel', 'pause'])) { UI.sfx('menu_back'); UI.close(this); return; }
         const dy = UI.navY();
         if (dy) {
           let i = this.sel;
@@ -361,7 +389,9 @@
       draw(ctx, a) {
         const t = UI.t;
         UI.veil(ctx, 1, 'rgba(3,4,8,0.72)');
-        const pw = 600, ph = 110 + posts.length * 56 + 40, px = (W - pw) / 2, py = (H - ph) / 2 - 10;
+        // only lit posts are listed (no '???' rows hinting at how many posts exist); `sel` still indexes `posts`
+        const shown = posts.map((post, i) => ({ post, i })).filter((r) => r.post.lit);
+        const pw = 600, ph = 110 + shown.length * 56 + 40, px = (W - pw) / 2, py = (H - ph) / 2 - 10;
         UI.panel(ctx, px, py, pw, ph, { cornerSize: 18 });
         ctx.font = UI.font(32);
         ctx.fillStyle = C.cream;
@@ -372,9 +402,9 @@
         ctx.font = UI.font(17, 'italic');
         ctx.fillStyle = C.dim;
         ctx.fillText(UI.text('ui.lanternwayChoose', 'Where shall the light carry you?'), W / 2, py + 100);
-        for (let i = 0; i < posts.length; i++) {
-          const post = posts[i];
-          const y = py + 146 + i * 56;
+        for (let row = 0; row < shown.length; row++) {
+          const { post, i } = shown[row];
+          const y = py + 146 + row * 56;
           const on = i === this.sel;
           if (on) {
             const g = ctx.createLinearGradient(px + 30, 0, px + pw - 30, 0);
@@ -389,7 +419,7 @@
           ctx.fillText(post.lit ? post.name : UI.text('ui.unknown', '???'), px + 112, y + 1);
           ctx.font = UI.font(16, 'italic');
           ctx.textAlign = 'right';
-          if (post.here) { ctx.fillStyle = C.gold; ctx.fillText(UI.text('ui.lanternwayHere', 'You are here'), px + pw - 44, y + 1); } else if (!post.lit) { ctx.fillStyle = C.faint; ctx.fillText(UI.text('ui.lanternwayUnlit', 'Unlit'), px + pw - 44, y + 1); }
+          if (post.here) { ctx.fillStyle = C.gold; ctx.fillText(UI.text('ui.lanternwayHere', 'You are here'), px + pw - 44, y + 1); }
           if (on && post.lit && !post.here) UI.flame(ctx, px + pw - 52, y + 7, 14, 'blue', t, 3);
         }
         UI.hints(ctx, [['confirm', UI.text('ui.prompts.travel', 'Travel')], ['cancel', UI.text('ui.close', 'Close')]], W / 2, py + ph + 30, 'center', { alpha: 0.6 });

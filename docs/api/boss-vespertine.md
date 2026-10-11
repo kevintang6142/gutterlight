@@ -41,6 +41,24 @@ rise into the vault; the throne stays cold and empty afterwards.
 
 Every attack has a hard timeout (swoop 8 s, gust 7 s, dust 6 s, brood 5 s, dash 9 s, ascend 2.4 s).
 
+## Telegraphs by mode (difficulty modes)
+
+`teleOn()` (top of `vespertine.js`) = `G.telegraphsOn()` (falls back to `G.game.telegraphs()`, default easy), read only
+at draw time (plus cosmetic particles): hitboxes, timings and aim locks are identical in all modes. **Easy** looks and
+plays exactly as before. **Standard / hardcore**:
+
+| Attack | Easy (explicit, as before) | Standard / hardcore | Diegetic tell (all modes; lead time) |
+|---|---|---|---|
+| `swoop` | — (the floor shadow is a general height cue, not a marker; kept in all modes) | unchanged | climbs beside/above, wings fold into a dart, small lift, `vesp_swoop`, 0.56 s (P2 0.5 / 0.46) |
+| `gust` | — | unchanged | wings drawn back, leaning back, motes drawn in, `vesp_inhale`, 0.66 s; wind streaks; the dust roll is visible |
+| `dust` | `G.warnZone` circle (0.8 s) + a pulsing dashed rim while each cloud settles; a dashed rim on the live cloud | **removed** the warning circle (`cue: 'none'`) and the warn-phase rim; **kept-subtle**: the live (harmful) cloud's rim at 75 % alpha. *Why*: the bower darkens to 0.86 for the whole pulse and the haze has a soft edge — with 3–4 clouds out, the 176-px gaps cannot be judged without the cloud's edge. (The rim marks a live hazard's edge, never a future one.) | rises, wraps herself, eyes dim, motes gather, `vesp_hum`, 0.76 s → wing flare + `vesp_dust`; each cloud drifts to its spot (0.5 s, visible) then **settles and thickens for 0.8 s** before it turns harmful (`vesp_settle`); **added (standard)**: the settling haze starts denser (0.6→1 instead of 0.35→0.8), glows faintly from within and sheds 2.4× the glittering scales |
+| `brood` / mothling dart | dashed aim streak (170 px) from the lock (52 % of the glow) | **removed** | the mothling glows (0.46 s, `vesp_moth` chirp, white eyes); **added (standard)**: at the lock it turns its head along the dart line and a white glint lights on its head (≥ 0.22 s before the dart) |
+| `dash` | 1400-px aim line, dashed while tracking, solid white at the lock | **removed** | glides level with the player, wings swept into blades, body rotated along the dash line, `vesp_blade` + shake 0.56 s (chained 0.48), lock chirp 0.34 s before; **added (standard)**: at the lock her head flares white and a pale aura pulses around her |
+| `ascend` | — | unchanged | (transition) |
+
+Verified (module tele-bosses2, `test-output/tele-bosses2/`): sheets easy vs standard (`cmp_v*.png`, `cmp_moth.png`);
+`boss-vespertine/test.js hit dodge flow` copy with `?mode=standard` / `?mode=easy`: ALL PASS (63) each; `enemy_selftest --boss vespertine` in both modes: ALL PASS (11).
+
 ## Intro, camera, darkness, defeat
 
 - **Intro**: the arena trigger (cols 10–30, rows 14–23) closes the gate and spawns her on the throne (46, 10) →

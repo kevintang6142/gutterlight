@@ -136,3 +136,97 @@ only a flaky `enemies` check (#62); run 3 on the final tree: ALL PASS (1097 s). 
 | 63 | `src/engine/game.js` (`game.boot`), `docs/api/engine.md` §16 | `?god=1` now applies only together with `?test=1` (`game.god = !!G.test && q.god === '1'`); `G.debug.god()` unchanged. | Release hygiene: every other test-only param (`room`, `tx/ty`, `abilities`, `testrooms`, `wake`) already required `test=1`; `god=1` alone made a real save slot invulnerable. Every tool/scratch script passes `god=1` together with `test=1`; the playthrough bot uses `G.debug.god()`. Checked by `test-output/qa-package/release_check.js`. |
 | 64 | `README.md` (new, project root) | Player README: what the game is, how to run it, controls (both key sets + gamepad), spoiler-free tips, saves, credits, developer section. | Release. |
 | 65 | project root | 14 stray QA screenshots (`bleed_*.png`, `pausecard_*.png`, `heartsig_after.png`, `intro_*_x.png`, `map_*.png`, written by `qa-find-ui-r1/r2` scripts with relative paths) moved to `test-output/qa-package/stray_root_pngs/`. | Release tidiness; nothing references them from the game or tools. |
+
+## Difficulty modes, boss wisp placement, no-spoiler inventory (module modes-integration)
+
+Six build modules worked in parallel (modes-core, wisp-placement, tele-framework, tele-bosses2, tele-enemies,
+no-spoilers). Contract correction: `G.game.mode` stays the engine state string (~170 uses); the difficulty is
+`G.game.difficulty()` (alias `runMode()`), `G.game.telegraphs()` is true only in Easy, and draw code uses
+`G.telegraphsOn()` (enemy_base.js). Nobody calls `G.game.mode()`.
+
+| # | File | What | Why |
+|---|---|---|---|
+| 66 | `src/data/text.js` (ui: `slotSnuffed chooseMode modeEasy modeStandard modeHardcore modeEasyDesc modeStandardDesc modeHardcoreDesc hardcoreConfirm hardcoreBegin gameOver gameOverSub sealsHeld heartwaxHalf heartwaxNone`), `docs/api/text.md`, `src/ui/title.js` (3 fallback strings) | The 15 keys requested by modes-core and no-spoilers. The two mode descriptions use an em dash (text rule: no spaced hyphen as a dash): "Attacks are clearly marked — every strike shows where it will land." / "The intended journey. Read your foes." / "As Standard, but death is final — the journey is lost."; title.js fallbacks match. | audit text check failed on the missing keys; text_check requires every ui key in text.md. |
+| 67 | `docs/api/enemies-*.md` (8 files) | "`G.game.mode()`" → "`G.game.difficulty()`; `G.telegraphsOn()` is true only in Easy". | The function does not exist (contract correction above). |
+| 68 | `tools/e2e.js` | New Game now passes "Choose a Trial": checks the chooser opens with the cursor on Standard, accepts it, checks `difficulty() === 'standard'` and `telegraphs() === false`; the rest of the flow (death/wisp, continue …) runs in Standard. 42 checks. | The chooser sits between the slot and the intro (e2e + e2e_dist failed at "intro verse plays"). |
+| 69 | `tools/playthrough.js` | `--mode standard\|easy` (default **standard**): the boot step picks the Trial in the real chooser (Easy = `up` first) and asserts it; `--from` resumes set `progress.mode` to the requested mode. 36/36 in Standard. | Task: the bot run is in Standard, Easy kept as an option. |
+| 70 | `tools/modes_check.js` (new), `tools/test_all.js` (steps `modes` = contract + wisp, `modes_tele` = tele, slow), `tools/README.md`, `docs/api/tools.md` | Regression for the contract: sections 1-7 promoted from `test-output/modes-core/test.js` (58 checks: ?mode/defaults, migration, deaths + hook, the real title chooser for all 3 modes, Hardcore permadeath incl. quit/reload mid-death); **wisp**: every boss, real walk into the trigger, real death mid-fight in Standard, respawn at the sconce before the arena, `progress.wisp` and the Gutterwisp entity at the spot from `G.wispSpotFor`, arena idle; death before the trigger, won arena, Hardcore boss death (no wisp); **tele**: every boss seeded (Math.random) in Easy/Standard/Hardcore, both phases, 120 frame hashes each: Standard = Hardcore frame for frame, Easy differs, no errors; `--shots` writes easy \| standard sheets. | Task item 3. |
+| 71 | `docs/TECH_SPEC.md` §11.1/§11.2 | progress `mode`, `broken`, `diedIn`; `G.game.mode` gains `'gameover'`; `difficulty()/telegraphs()/isHardcore()/isBroken()`; `newGame(slot, mode)`. | modes-core request. |
+| 72 | `README.md`, `docs/STATUS.md` | README: new "Modes" section, the Gutterwisp after a boss death, inventory/slot-card tips updated (no spoilers); STATUS §1h. | Task item 4. |
+| 73 | `test-output/boss-matron/test.js`, `test-output/boss-tallowmere/test.js` (scratch suites, not in test_all) | Stale flow checks fixed: Matron gate id `sf_mgate` → `sf_gate9` (renamed in #34); Tallowmere's defeat check accepts no `boss_defeated` stinger when the seal card follows (boss_base QA audio fix). Both flows ALL PASS (run in Easy, the `?test=1` default). | tele-framework reported them failing "in every mode"; they were stale, not mode regressions. |
+
+Verification on the final tree: `node tools/test_all.js` ALL PASS (25 steps, 1567 s; `modes` 102 checks, `modes_tele` 40,
+`playthrough` 36/36 in Standard, `e2e`/`e2e_dist` 42 each); `node tools/playthrough.js --mode easy` 36/36;
+`node tools/playthrough.js --file dist/Gutterlight.html` 36/36; `node tools/build.js` verify OK.
+
+## Modes QA fixes integrated and re-verified (module modes-reverify)
+
+Four fixers (boss:effigy, engine, ui, text) worked in parallel on the modes QA findings (finders: modes-find-fairness,
+modes-find-modes, modes-find-wisp, modes-find-spoilers). Their code merged without conflicts; the only breakage was
+the audit `text` check on the missing `ui.noChartsYet` key (the ui fixer may not edit text.js).
+
+| # | File | What | Why |
+|---|---|---|---|
+| 74 | `src/data/text.js` (`ui.noChartsYet` = "Nothing yet"; `shops.quill.unwalked` = "Hm-hm... Nothing I've drawn touches anywhere you've been. Go find an edge, then come back for its chart."), `docs/api/text.md` | The two keys the ui fixer requested for Quill's spoiler fix (unknown regions are no longer listed). | audit FAILED on `src/ui/shop.js:196` `ui.noChartsYet`; `unwalked` was read only through a fallback. |
+| 75 | `src/entities/wisp.js` (wispHint fallback), `src/ui/menus.js` (`act('dash', …)` fallback) | Fallbacks now match text.js: "Your Gutterwisp waits on the way back, holding your Cinders. Strike it to take them back." and "Dash". | The text fixer changed the keys (the hint no longer says "where you fell"; the Controls list no longer names Flare Dash) but could not touch the fallbacks. |
+| 76 | `tools/text_check.js` | New errors: a `ui.actions.*` label that contains an ability's proper name; a `ui.wispHint` that says "where you fell". | Promoted from `test-output/modes-fix-text/check.js` (text fixer's request). |
+| 77 | `tools/modes_check.js` (new sections `engine`, `leap`), `tools/test_all.js` (`modes` = contract wisp **engine**; `modes_tele` = tele **leap**) | `engine` (12 checks, real storage): stale-tab hardcore death breaks the run at once; game-over time = saved time; Continue on a broken / erased slot is refused and the title comes back (no black screen, no silent New Game); another run in the slot is left alone; quit mid-death empties Ember; Ember capped on Continue; an old save's wisp in the Effigy arena moves to gw_04 on Continue; pre-runId saves derive one id. `leap` (10 checks): Effigy off-screen leap (fight opening, dx -1150/950/1150 incl. phase 2) gets the kept *subtle* landing mark with ≥ 0.45 s lead (measured 0.73-0.78 s), an in-view leap (dx -400) none, in Standard and Hardcore. | Promoted from `test-output/modes-fix-engine/r1.js` and `test-output/modes-fix-boss-effigy/leapmark.js` (fixers' requests). |
+
+Verification on the final tree: `node tools/test_all.js` ALL PASS (25 steps, 2622 s; `modes` 113, `modes_tele` 50,
+`playthrough` 36/36 in Standard, `build` verify OK, `e2e`/`e2e_dist` 42 each). Finder repros re-run, all corrected
+(STATUS §1i).
+
+## Control rebinding + no soul/damage numbers (module rebind-integration)
+
+Two builders worked in parallel. **rebind-core** made `G.input` table-driven (12 gameplay actions x 2 keyboard/mouse slots
++ 1 gamepad slot, mouse buttons, lockout fallbacks, capture) and added the Controls rebinding screen. **no-numbers**
+removed every Ember/damage number from text and UI (health candles, notch pips, Brand names only) and added a permanent
+`text_check` rule. Their code merged without conflicts. The only breakage was `audit text`: 19 new `ui.*` keys were not
+in text.js yet.
+
+| # | File | What | Why |
+|---|---|---|---|
+| 78 | `src/data/text.js` | New ui keys `actions.aimUp bindPrimary bindSecondary bindPress rebind clear resetControls resetControlsConfirm controlsReset capturePrompt bindMoved bindSwapped bindLast bindReserved bindRefused bindNeedPad bindNeedKey controlsFallback`; `actions.up` = "Up / Aim Up" (Interact has its own row now). | rebind-core's menus.js reads them (audit `text` failed). `controlsReset` contains "default" (input_check matches it). |
+| 79 | `src/data/text.js` | `ui.controlTips[4]` and `lore_sh_3` ("rest beside it") use `{interact}` (was `{up}`); header comments updated. | Up and Interact are separate, separately rebindable actions. After rebinding Up, these showed Up's key. |
+| 80 | `tools/text_check.js` | `INPUT_TOKENS` += `interact left right pause`; `PLACEHOLDERS` += `action input other`; new error: `{up}` within 20 chars before rest/read/talk/travel/shop/open. | Validates the new tokens and placeholders. Tested: the new rule rejects the old lore_sh_3 line. |
+| 81 | `docs/api/text.md` | Input tokens now include `{interact}` and are said to follow the bindings; placeholders `{action} {input} {other}`; new "Rebinding" row in the ui table; `aimUp`. | text_check requires every ui key to be documented. |
+| 82 | `src/ui/dialogue.js` | `relayout()` cache key = `lastDevice + labelsVersion` (was `lastDevice`). | rebind-core's suggestion: an open dialogue's key caps follow a binding change. |
+| 83 | `tools/test_all.js` (new step `input`, after `e2e`), `tools/README.md`, `docs/api/tools.md` | `tools/input_check.js` runs in test_all (and `--quick`, about 4 s). | Task item 3. |
+| 84 | `docs/TECH_SPEC.md` §6 | Says controls can be rebound: typed ids, `G.settings.bindings`, the lockout fallbacks, and a pointer to docs/api/engine.md §3. The static map is now labeled as the defaults. | rebind-core's request (spec file not owned by the builder). |
+| 85 | `docs/api/ui.md` | Inventory row: health candles + cinders, Brand name only. Bramm: current → next Brand name, no damage. `ui.damage` was removed. New `UI.notchCost` helper. Map close/pan follow the bindings. | no-numbers' request. |
+| 86 | `README.md` | Controls: every action can be rebound (Pause > Controls or the title), mouse buttons (LMB/RMB/MMB/Mouse 4/5) can be bound, Backspace/Delete clears, Reset to Defaults, and the lockout guarantee (Enter/Esc/arrows, Esc pauses). Defaults table kept, with Interact as its own row. Mouse sentence and tips line updated. test_all is now 26 steps. `docs/STATUS.md` line 17 also updated. | Task item 5. README has no Ember/damage numbers (checked with grep). |
+
+Audit of control labels: every prompt goes through `G.input.label` via `UI.keyLabel` / `UI.tokens` / `UI.layoutRich` / `UI.hints`.
+This covers ability and item cards, inventory ability descriptions, lore tablets and dialogue, the Controls tips, and the
+footer hints of every screen. Fixed key overrides that remain: the map's pan hint '←↑→↓', the Options '← →' adjust hint,
+and the Controls 'Del'/'Y' clear hint. Each one names an input that always works there (menu fallback / reserved key).
+No other hard-coded key names appear in UI code or text, and world prompts show text only. No test depended on the old
+static KEYMAP/PADMAP.
+| 87 | `tools/input_check.js` | `--file <html>` (as in e2e.js), so the rebinding suite can also run on `dist/Gutterlight.html`. | Task item 5 (dist verification). |
+
+Verification on the final tree (logs in `test-output/rebind-integration/`): `node tools/test_all.js` **ALL PASS (26 steps, 1758 s)**.
+Highlights: `input` 54, `ui` 96, `e2e`/`e2e_dist` 42 each, `modes` 113, `modes_tele` 50, `playthrough` 36/36, `build` verify OK.
+`node tools/playthrough.js --file dist/Gutterlight.html` ALL PASS (36 steps; the single known fragile reach edge was worked
+around, as in earlier releases). `node tools/input_check.js --file dist/Gutterlight.html` PASS 54/0. `node tools/text_check.js` OK, 0 errors.
+After this run the only code edit was to tools/input_check.js (the `--file` arg); it was re-run on src and dist (54/0 each).
+
+## Rebinding QA fixes integrated and re-verified (module rebind-reverify)
+
+Two fixers (engine: `src/core/input.js`; ui: `src/ui/*`) worked in parallel on the rebinding QA findings (finders:
+rebind-find-input, rebind-find-labels, rebind-find-numbers, rebind-find-regression). Their code merged without
+conflicts. The only breakage was the audit `text` check: six `ui.*` keys used by the new `menus.js` were not in text.js.
+
+| # | File | What | Why |
+|---|---|---|---|
+| 88 | `src/data/text.js`, `docs/api/text.md` | New ui keys `capturePromptKey capturePromptKeyPad capturePromptPad capturePromptPadKey controlsFallbackKey controlsFallbackPad bindLastPad bindOsKey bindCtrlWarn`. Removed `capturePrompt` and `controlsFallback` (unused; the old fallback line falsely said "The left stick always moves"). | Audit `text` failed on the six keys menus.js already used; the other three back the engine's new results. |
+| 89 | `src/ui/menus.js` | Capture: `setBinding` reason `'os'` → "Meta is a system key and cannot be bound." and the capture keeps listening; reason `'last'` with `device:'gamepad'` (capture and Clear) → "Pause needs a gamepad button." (helper `lastNote`), not the misleading "needs at least one binding" (Pause still has Esc/P); `warning:'ctrlCombos'` → "Ctrl+W, Ctrl+T and Ctrl+N cannot be blocked by the browser." | Engine fixer's needs_from_others. |
+| 90 | `src/ui/menus.js` (Controls `draw`) | While a capture keeps listening after a refusal, the fresh refusal note now takes the message line for its 3 s, then the capture prompt returns. | Before, the capture prompt always covered the note, so the "kept for the menus", "press a gamepad button" and system-key notes were never visible (only the deny sound). Checked on a screenshot. |
+| 91 | `src/core/input.js` | `RESERVED` += `key:Enter`, `key:NumpadEnter` (null owner): `setBinding` refuses them (reason `'reserved'`) and `loadBindings` drops them from stored tables. | UI fixer's needs_from_others: the capture already refused Enter, but a direct call or an old/corrupt table could still bind it (Enter always confirms in menus). |
+| 92 | `docs/api/engine.md` §3, `docs/api/ui.md` (controls row) | Documents the new reasons/results (`'os'`, `'last'`+`device:'gamepad'`, `warning:'ctrlCombos'`, Enter reserved) and the new capture/fallback/notes keys. | Docs follow the code. |
+| 93 | `tools/rebind_check.js` (new), `tools/rebind/engine_fixes.js`, `tools/rebind/ui_fixes.js`, `tools/rebind/notes.js`, `tools/test_all.js` (step `rebind` after `input`), `tools/README.md`, `docs/api/tools.md` | The fixers' probes (`test-output/rebind-fix-engine/check.js` 20 checks, `test-output/rebind-fix-ui/probe.js` 17) and the reverify probe (8) promoted to a permanent step, with `--file` so they also run on dist. | Both fixers asked for their checks to be kept; as in #76/#77. |
+
+Verification on the final tree (logs in `test-output/rebind-reverify/`): `node tools/test_all.js` **ALL PASS (27 steps,
+1641 s)**: `rebind` 3/3 parts (45 checks), `input` 54, `ui` 96, `e2e`/`e2e_dist` 42 each, `playthrough` 36/36, `build`
+verify OK. On dist: `node tools/rebind_check.js --file dist/Gutterlight.html` ALL PASS and `node tools/input_check.js
+--file dist/Gutterlight.html` 54/0. The finder repros (rebind-find-input probe1/3/5) were re-run and all are corrected.
+The only edits after the full run were to docs.

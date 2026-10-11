@@ -1,6 +1,6 @@
 // src/ui/ending.js — the opening verse (G.Text.intro over a dark animated backdrop; skippable) and the endings
 // ('undying' | 'gutterlight'): a title, illustrated pages (procedural scenes chosen by G.Text.endings[id].scenes),
-// the credits scroll, "The End", then onDone.
+// the credits scroll, "The End", then onDone; and the hardcore game-over screen (UI.playGameOver).
 (function () {
   'use strict';
   const G = globalThis.G;
@@ -521,5 +521,99 @@
         ctx.beginPath(); ctx.arc(cx - (n - 1) * 7 + i * 14, y, i === cur ? 3 : 2, 0, TAU); ctx.fill();
       }
     }
+  };
+
+  // ================================================================== hardcore game over
+  /** Hardcore death: a candle gutters out on black, "Your flame is spent." / "The light does not return.", the
+   *  run's region, time and completion; then onDone (the engine returns to the title). Advances on its own (~11 s);
+   *  Confirm/Back/Pause skip once the lines are up. info: {slot, room, regionId, playTime, completion}. */
+  UI.playGameOver = function (info, onDone) {
+    UI.closeAll(false);
+    const inf = info || {};
+    const rid = inf.regionId || (inf.room && UI.regionOfRoom ? UI.regionOfRoom(inf.room) : null);
+    const region = rid && rid !== 'test' ? UI.regionName(rid) : '';
+    const time = G.U && G.U.formatTime ? G.U.formatTime(inf.playTime || 0) : '';
+    const details = [region, time, (inf.completion | 0) + '%'].filter(Boolean).join('   ·   ');
+    const line1 = UI.text('ui.gameOver', 'Your flame is spent.');
+    const line2 = UI.text('ui.gameOverSub', 'The light does not return.');
+    const ash = new UI.Particles(70);
+    const smoke = new UI.Particles(40);
+    const OUT_T = 3.2, LINE1 = 3.6, LINE2 = 5.0, INFO = 6.3, SKIP = 4.4, AUTO = 11.5;
+    let puffed = false;
+    return UI.push({
+      name: 'gameover', fadeIn: 1.4, fadeOut: 1.8, hideHud: true, onClose: onDone, leaving: false,
+      update(dt, active) {
+        if (Math.random() < dt * 5) ash.spawn({ x: Math.random() * (W + 200), y: -8, vx: -8 - Math.random() * 10, vy: 12 + Math.random() * 12, life: 14, size: 1 + Math.random() * 1.4, color: '#8c8a86', alpha: 0.25 + Math.random() * 0.25, wobble: 10, kind: 'flake', rot: Math.random() * 6, vrot: 1 });
+        ash.update(dt);
+        const cx = W / 2, cy = H * 0.36;
+        if (this.t >= OUT_T && !puffed) {
+          puffed = true;
+          UI.sfx('wisp_die', { vol: 0.35 });
+          for (let i = 0; i < 10; i++) smoke.spawn({ x: cx + (Math.random() - 0.5) * 6, y: cy - 4, vx: (Math.random() - 0.5) * 14, vy: -20 - Math.random() * 18, life: 3 + Math.random() * 2, size: 3, size2: 14, color: '#9a968c', alpha: 0.22, wobble: 8, kind: 'soft' });
+        }
+        if (puffed && this.t < OUT_T + 5 && Math.random() < dt * 4) smoke.spawn({ x: cx + 2, y: cy - 6, vx: (Math.random() - 0.5) * 6, vy: -16 - Math.random() * 8, life: 3.5, size: 2, size2: 12, color: '#8c887e', alpha: 0.14, wobble: 10, kind: 'soft' });
+        smoke.update(dt);
+        if (this.leaving) return;
+        if (this.t >= AUTO) { this.leaving = true; UI.close(this); return; }
+        if (!active || this.t < SKIP) return;
+        if (UI.pressedAny(UI.ADVANCE) || UI.pressed('pause') || UI.pressedBack()) { this.leaving = true; UI.sfx('menu_back'); UI.close(this); }
+      },
+      draw(ctx, a) {
+        const t = this.t, ut = UI.t;
+        ctx.fillStyle = '#020306';
+        ctx.fillRect(0, 0, W, H);
+        ash.draw(ctx);
+        const cx = W / 2, cy = H * 0.36;
+        // the candle: wax stub with a drip, its flame guttering out
+        const fadeK = Math.min(1, t / 1.2);
+        ctx.globalAlpha = a * fadeK;
+        const lit = t < OUT_T ? 1 - Math.max(0, (t - 1.4) / (OUT_T - 1.4)) : 0;
+        if (lit > 0) UI.glow(ctx, cx, cy - 16, 40 + 120 * lit, '#3f8cff', 0.28 * lit);
+        ctx.fillStyle = '#d8d0ba';
+        ctx.fillRect(cx - 9, cy, 18, 46);
+        ctx.beginPath(); ctx.ellipse(cx, cy, 9, 3, 0, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx + 8, cy + 12, 2.6, 7, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillRect(cx + 3, cy, 6, 46);
+        ctx.strokeStyle = '#141210'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx, cy - 1); ctx.quadraticCurveTo(cx + 1, cy - 6, lit > 0 ? cx : cx + 3, cy - 9); ctx.stroke();
+        if (lit > 0) {
+          const flick = t > 1.4 ? 0.6 + 0.4 * Math.abs(Math.sin(t * 23) * Math.sin(t * 7.3)) : 1;
+          UI.flame(ctx, cx, cy - 6, 34 * lit * flick, 'blue', ut, 5);
+        } else if (t < OUT_T + 1.2) {
+          const ek = 1 - (t - OUT_T) / 1.2; // the wick's last ember
+          ctx.fillStyle = 'rgba(255,140,70,' + (0.8 * ek).toFixed(3) + ')';
+          ctx.beginPath(); ctx.arc(cx + 3, cy - 9, 1.8, 0, TAU); ctx.fill();
+        }
+        smoke.draw(ctx);
+        ctx.globalAlpha = a;
+        // the lines
+        const k1 = Math.max(0, Math.min(1, (t - LINE1) / 1.4)), k2 = Math.max(0, Math.min(1, (t - LINE2) / 1.4)), k3 = Math.max(0, Math.min(1, (t - INFO) / 1.2));
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        if (k1 > 0) {
+          ctx.globalAlpha = a * UI.ease.inOutSine(k1);
+          ctx.font = UI.font(38, 'italic');
+          ctx.fillStyle = C.cream;
+          ctx.fillText(line1, W / 2, H * 0.56 + (1 - k1) * 6);
+        }
+        if (k2 > 0) {
+          ctx.globalAlpha = a * UI.ease.inOutSine(k2) * 0.85;
+          UI.flourish(ctx, W / 2, H * 0.56 + 40, 150, { alpha: 0.45, color: C.creamDim });
+          ctx.font = UI.font(24, 'italic');
+          ctx.fillStyle = C.creamDim;
+          ctx.fillText(line2, W / 2, H * 0.56 + 78);
+        }
+        if (k3 > 0 && details) {
+          ctx.globalAlpha = a * k3 * 0.6;
+          ctx.font = UI.font(17);
+          ctx.fillStyle = C.dim;
+          UI.spacedText(ctx, details, W / 2, H * 0.56 + 140, 1, 'center');
+        }
+        ctx.globalAlpha = a;
+        const hk = Math.min(1, Math.max(0, (t - SKIP) / 1));
+        if (hk > 0) UI.hints(ctx, [['confirm', UI.text('ui.continue', 'Continue')]], W - 40, H - 32, 'right', { alpha: 0.3 * hk, size: 15 });
+      },
+    });
   };
 })();

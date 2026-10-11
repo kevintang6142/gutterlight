@@ -121,3 +121,29 @@ every room load; for a unique one use `id: 'mw_u<n>', persistent: true` and 2–
 - moth_knight: slim armoured moth duelist with a white ruff, plume-antennae, folded dusty wings (they open for hops,
   vaults and the lunge) and a pale sabre with a swing trail. Poses: guard, walk, notice, ready, dash, slash 1, pull,
   slash 2, recover, rise, lunge, hop, land, corpse.
+
+## Telegraphs by mode (easy / standard / hardcore)
+
+The difficulty modes (`G.game.difficulty()`; `G.telegraphsOn()` is true only in Easy) change only **explicit** telegraphs: drawn geometry that outlines where or
+when damage lands (floor zones, landing marks, aim/trajectory lines, hitbox previews, danger tints). Those draw only
+while `G.game.telegraphs()` (alias `G.telegraphsOn()` in enemy_base) is true, which means easy mode only. The
+telegraph audit (module tele-enemies) found **no explicit marker on any of these enemies**. Every tell below is
+**diegetic**: the attacker's own wind-up pose, a glow or glint on its body or weapon (`telegraph()` anchors it on the
+body, weapon tip, lantern, bell or pot), its sound cue, the wind-up shake, particles it emits, or projectiles forming on
+it and visible in flight. So all three modes look and play the same, with the same timing. Nothing was removed and
+nothing was kept-subtle. Verified: `test-output/tele-enemies/sheet_mothwood.png` shows easy and standard side by side
+with seeded randomness and 0.00 % pixel difference at every wind-up. The lab self-test passes in all three modes
+(`test-output/tele-enemies/run_all.sh`). **Rule for new attacks:** gate any explicit marker at draw time with
+`G.telegraphsOn()` (or keep it with `keep: true` and document why), and keep a diegetic tell of at least 0.35 s.
+
+| attack | easy | standard / hardcore | diegetic tell (lead time) |
+|---|---|---|---|
+| dusk_moth: swoop | no explicit marker | same as easy (nothing to remove) | **rear** 0.50 s: brakes, tilts back, wings hauled high, eye-spots flare, `dusk_rear` |
+| dusk_moth: scale fan | no explicit marker | same as easy (nothing to remove) | **shiver** 0.55 s: hangs, wings tremble, glitter, `scale_shiver`; the scales are visible in flight |
+| cocoon_spawner: brood | no explicit marker | same as easy (nothing to remove) | **swell** 0.60 s: bulges, heart-light flares, the slit splits, `cocoon_throb` |
+| mothling: dart | no explicit marker | same as easy (nothing to remove) | **buzz** 0.42 s: hangs still, wings blur, heart-glow brightens, `mothling_buzz` |
+| dust_maw: bite | no explicit marker | same as easy (nothing to remove) | **tremble** 0.50 s: the hidden heap shudders, heaps up and spits grit, `dust_stir`, shake 2.2 px |
+| dust_maw: rebite | no explicit marker | same as easy (nothing to remove) | **rebite** 0.45 s: jaws close, the maw draws back low, `dust_stir` |
+| moth_knight: dash + slash 1 | no explicit marker | same as easy (nothing to remove) | **ready** 0.45 s: drops low, blade drawn back, blade glint, `mknight_ready` |
+| moth_knight: slash 2 | no explicit marker | same as easy (nothing to remove) | **pull** 0.36 s: blade hoisted overhead, glint |
+| moth_knight: flying lunge | no explicit marker | same as easy (nothing to remove) | **rise** 0.55 s: wings flare wide, blade levelled at the Wickling, glint, `mknight_flare` |

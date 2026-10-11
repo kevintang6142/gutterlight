@@ -114,7 +114,7 @@
       // facing: props.facing (1|-1|'left'|'right') or props.flip; else random for variety
       const f = p.facing;
       this.facing = f === 'left' || f === -1 ? -1 : f === 'right' || f === 1 ? 1 : p.flip ? -1 : (Math.random() < 0.5 ? -1 : 1);
-      this.seed = Math.random() * 1000;
+      this.seed = (this.x * 0.137 + this.y * 0.311 + (zoneSerial++) * 7.77) % 1000;   // no Math.random: easy stays bit-identical
       // runtime state
       this.state = null; this.prevState = null; this.stateTime = 0; this.stateData = {};
       this._prevST = -1; this._stFresh = true; this._once = null;
@@ -1348,9 +1348,35 @@
 
   // =====================================================================================================
   // Telegraph zones: pulsing warning areas (debris columns, heated floor, spike rows). Harmless by themselves.
+  // MODE-AWARE (difficulty modes, docs/api/enemies.md §6.1): the zone geometry is an EXPLICIT telegraph and is
+  // drawn only while G.telegraphsOn() is true (easy). In standard / hardcore the zone still exists and times
+  // the attack identically (dur, onDone), but draws nothing and instead emits a subtle DIEGETIC cue chosen by
+  // its shape (o.cue): 'dust' (pebbles + dust trickling from the ceiling over a column), 'cracks' (dark hairline
+  // cracks + hopping crumbs + a faint rumble on a floor strip), 'drip' (a molten drop swelling on the ceiling,
+  // then trickling), 'none'. o.keep: 'subtle' keeps a dim, outline-free version of the marker in standard /
+  // hardcore (for attacks that would be unfair without it — document why at the call site); 'full' keeps it as is.
   // =====================================================================================================
+  let urlMode;   // fallback until G.game.telegraphs() exists: ?mode=easy|standard|hardcore
+  /** True when explicit telegraphs (zones, landing marks, aim lines) should be drawn — easy mode only. */
+  G.telegraphsOn = function () {
+    const g = G.game;
+    if (g && typeof g.telegraphs === 'function') { try { return g.telegraphs() !== false; } catch (e) { return true; } }
+    if (urlMode === undefined) {
+      urlMode = null;
+      try { const m = /[?&]mode=(easy|standard|hardcore)\b/.exec((globalThis.location && globalThis.location.search) || ''); if (m) urlMode = m[1]; } catch (e) { /* no location */ }
+    }
+    const m = urlMode || (g && g.progress && g.progress.mode) || 'easy';
+    return m !== 'standard' && m !== 'hardcore';
+  };
+  let zoneSerial = 0;
+  const CUE_AUTO = { column: 'dust', floor: 'cracks', circle: 'none', rect: 'none' };
+  const CUE_KINDS = { dust: 1, cracks: 1, drip: 1, none: 1 };
   class TelegraphZone extends G.Entity {
-    /** props: {x, y, w, h (px), dur (s), color, style: 'rect'|'column'|'floor'|'circle', onDone(zone)} */
+    /**
+     * props: {x, y, w, h (px), dur (s), color, style: 'rect'|'column'|'floor'|'circle', onDone(zone),
+     *         cue: 'auto'|'dust'|'cracks'|'drip'|'none'|false (standard/hardcore diegetic cue; auto = by style),
+     *         cueColor (particle colour; default by kind), keep: false|'subtle'|'full' (draw in standard too)}
+     */
     constructor(props) {
       const p = props || {};
       super({ type: 'telegraph' });
@@ -1363,45 +1389,153 @@
       this.style = p.style || 'rect';
       this.z = -6;
       this.age = 0;
+      const c = p.cue === false ? 'none' : (p.cue == null || p.cue === 'auto') ? (CUE_AUTO[this.style] || 'none') : p.cue;
+      this.cue = CUE_KINDS[c] ? c : 'none';
+      this.keep = p.keep === 'full' || p.keep === true ? 'full' : p.keep === 'subtle' ? 'subtle' : null;
+      this.seed = (this.x * 0.137 + this.y * 0.311 + (zoneSerial++) * 7.77) % 1000;   // no Math.random: easy stays bit-identical
+      this._cueAcc = 0;
     }
+    /** Whether the zone geometry is drawn right now (easy, or kept by the caller). */
+    get explicit() { return !!this.keep || G.telegraphsOn(); }
     update(dt) {
       this.age += dt;
+      if (this.cue !== 'none' && !G.telegraphsOn()) this.updateCue(dt);
       if (this.age >= this.dur) {
         this.remove();
         if (typeof this.props.onDone === 'function') { try { this.props.onDone(this); } catch (e) { G.reportError(e, 'telegraph.onDone'); } }
       }
     }
+    /** Standard / hardcore: emit the diegetic cue particles (purely cosmetic; never touches timing). */
+    updateCue(dt) {
+      const fx = G.fx;
+      if (!fx || !fx.spawn) return;
+      // off-screen zones emit nothing (the particle pool is shared; many columns can be warned at once)
+      if (G.camera && typeof G.camera.visible === 'function' && !G.camera.visible(this.x, this.y, this.w, this.h, 120)) return;
+      const k = Math.min(1, this.age / this.dur);
+      const cx = this.x + this.w / 2, half = this.w * 0.32;
+      const cc = this.props.cueColor, c1 = Array.isArray(cc) ? cc[0] : cc, c2 = Array.isArray(cc) ? (cc[1] || cc[0]) : cc;   // [pebble, dust]
+      if (this.cue === 'dust' || (this.cue === 'drip' && k > 0.12)) {
+        // from the ceiling over the column (or the top of the view when the ceiling is off-screen)
+        const camY = G.camera && typeof G.camera.y === 'number' ? G.camera.y : -1e9;
+        const top = Math.max(this.y + 2, camY - 6);
+        const rate = this.cue === 'drip' ? 6 + 28 * k : 22 + 40 * k;   // particles / s, building up
+        this._cueAcc += dt * rate;
+        while (this._cueAcc >= 1) {
+          this._cueAcc -= 1;
+          const drip = this.cue === 'drip';
+          const px = drip ? cx + rnd(-4, 4) : cx + rnd(-half, half);
+          if (drip || Math.random() < 0.6) {
+            // pebbles / drops: fall the whole height (life long enough to reach a floor ~600 px below)
+            fx.spawn({ x: px, y: top + rnd(0, 6), vx: rnd(-6, 6), vy: rnd(40, 120), gravity: 1100, life: 1.2, size: drip ? rnd(1.8, 3) : rnd(2.4, 4.4),
+              color: c1 || (drip ? this.color : '#cbbfa8'), alpha: 0.95, shape: drip ? 'drop' : 'tri', rot: rnd(0, TAU), vrot: rnd(-8, 8) });
+          } else {
+            const s = rnd(4, 8);   // dust puffing out of the vault where it comes loose
+            fx.spawn({ x: px, y: top + rnd(0, 10), vx: rnd(-16, 16), vy: rnd(20, 70), gravity: 60, drag: 1.2, life: rnd(0.8, 1.3), size: s, size2: s * 2.6,
+              color: c2 || '#b3a893', alpha: 0.5, shape: 'circle' });
+          }
+        }
+      } else if (this.cue === 'cracks') {
+        const fy = this.y + this.h;
+        this._cueAcc += dt * (5 + 16 * k);
+        while (this._cueAcc >= 1) {
+          this._cueAcc -= 1;
+          const px = cx + rnd(-this.w * 0.42, this.w * 0.42);
+          if (Math.random() < 0.6) {
+            fx.spawn({ x: px, y: fy - 1, vx: rnd(-25, 25), vy: -rnd(70, 170) * (0.6 + 0.6 * k), gravity: 1300, life: rnd(0.3, 0.55), size: rnd(1.5, 2.8),
+              color: c1 || '#7d7466', alpha: 0.9, shape: 'tri', rot: rnd(0, TAU), vrot: rnd(-12, 12) });
+          } else {
+            const s = rnd(3, 5.5);
+            fx.spawn({ x: px, y: fy - 2, vx: rnd(-20, 20), vy: -rnd(10, 35), gravity: -20, drag: 2.5, life: rnd(0.4, 0.7), size: s, size2: s * 2.2,
+              color: c2 || '#8a8070', alpha: 0.35, shape: 'circle' });
+          }
+        }
+        if (!this._rumbled && G.game && G.game.shake) { this._rumbled = true; G.game.shake(1.2, Math.min(0.5, this.dur)); }
+      }
+    }
     draw(ctx, t) {
+      const on = G.telegraphsOn();
+      if (on || this.keep === 'full') { this.drawZone(ctx, 1); return; }
+      if (this.keep === 'subtle') this.drawZone(ctx, 0.4, true);
+      if (this.cue === 'cracks') this.drawCracks(ctx);
+      else if (this.cue === 'drip') this.drawSwell(ctx);
+      void t;
+    }
+    /** Standard cue: two or three short dark hairline cracks that lengthen as the eruption builds. */
+    drawCracks(ctx) {
+      const k = Math.min(1, this.age / this.dur);
+      const fy = this.y + this.h;
+      const n = this.w > 90 ? 3 : 2;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(12,10,14,' + (0.35 + 0.35 * k).toFixed(3) + ')';
+      ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const sd = this.seed + i * 37.1;
+        const x0 = this.x + this.w * (0.2 + 0.6 * ((Math.sin(sd) * 0.5 + 0.5) * 0.8 + i * 0.1) / (0.8 + (n - 1) * 0.1));
+        const len = (6 + 10 * k) * (0.7 + 0.3 * Math.abs(Math.sin(sd * 1.7)));
+        const dir = Math.sin(sd * 2.3) > 0 ? 1 : -1;
+        ctx.moveTo(x0, fy);
+        ctx.lineTo(x0 + dir * len * 0.4, fy - len * 0.35);
+        ctx.lineTo(x0 + dir * len * 0.2, fy - len * 0.7);
+        ctx.lineTo(x0 + dir * len * 0.55, fy - len);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    /** Standard 'drip' cue: a drop of the zone colour swelling on the ceiling over the column. */
+    drawSwell(ctx) {
+      const k = Math.min(1, this.age / this.dur);
+      const camY = G.camera && typeof G.camera.y === 'number' ? G.camera.y : -1e9;
+      const top = Math.max(this.y, camY);
+      const cx = this.x + this.w / 2, r = 2.5 + 6 * k;
+      ctx.save();
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 0.9, top);
+      ctx.quadraticCurveTo(cx - r * 1.1, top + r * 1.4, cx, top + r * 2.2);
+      ctx.quadraticCurveTo(cx + r * 1.1, top + r * 1.4, cx + r * 0.9, top);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+      if (G.fx && G.fx.glowAt) G.fx.glowAt(ctx, cx, top + r, 10 + 14 * k, this.color, 0.45 + 0.35 * k);
+    }
+    drawZone(ctx, mul, subtle) {
       const k = this.age / this.dur;
       const pulse = 0.5 + 0.5 * Math.sin(this.age * (10 + 22 * k));
-      const a = (0.12 + 0.22 * k) * (0.6 + 0.4 * pulse);
+      const a = (0.12 + 0.22 * k) * (0.6 + 0.4 * pulse) * mul;
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       ctx.fillStyle = G.U.rgba(this.color, a);
       if (this.style === 'circle') {
         const r = Math.min(this.w, this.h) / 2;
         ctx.beginPath(); ctx.arc(this.cx, this.cy, r, 0, TAU); ctx.fill();
-        ctx.strokeStyle = G.U.rgba(this.color, 0.5 + 0.4 * pulse); ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(this.cx, this.cy, r * (1 - 0.15 * k), 0, TAU); ctx.stroke();
+        if (!subtle) {
+          ctx.strokeStyle = G.U.rgba(this.color, 0.5 + 0.4 * pulse); ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(this.cx, this.cy, r * (1 - 0.15 * k), 0, TAU); ctx.stroke();
+        }
       } else if (this.style === 'column') {
         const g = ctx.createLinearGradient(0, this.y, 0, this.y + this.h);
         g.addColorStop(0, G.U.rgba(this.color, a * 1.4)); g.addColorStop(1, G.U.rgba(this.color, a * 0.3));
         ctx.fillStyle = g; ctx.fillRect(this.x, this.y, this.w, this.h);
-        ctx.fillStyle = G.U.rgba(this.color, 0.4 + 0.5 * pulse);
-        ctx.fillRect(this.x, this.y + this.h - 4, this.w, 4);
+        if (!subtle) {
+          ctx.fillStyle = G.U.rgba(this.color, 0.4 + 0.5 * pulse);
+          ctx.fillRect(this.x, this.y + this.h - 4, this.w, 4);
+        }
       } else if (this.style === 'floor') {
         const g = ctx.createLinearGradient(0, this.y + this.h, 0, this.y);
         g.addColorStop(0, G.U.rgba(this.color, a * 2)); g.addColorStop(1, G.U.rgba(this.color, 0));
         ctx.fillStyle = g; ctx.fillRect(this.x, this.y, this.w, this.h);
-        ctx.fillStyle = G.U.rgba(this.color, 0.35 + 0.5 * pulse);
-        ctx.fillRect(this.x, this.y + this.h - 3, this.w, 3);
+        if (!subtle) {
+          ctx.fillStyle = G.U.rgba(this.color, 0.35 + 0.5 * pulse);
+          ctx.fillRect(this.x, this.y + this.h - 3, this.w, 3);
+        }
       } else {
         ctx.fillRect(this.x, this.y, this.w, this.h);
-        ctx.strokeStyle = G.U.rgba(this.color, 0.4 + 0.5 * pulse); ctx.lineWidth = 2;
-        ctx.strokeRect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
+        if (!subtle) {
+          ctx.strokeStyle = G.U.rgba(this.color, 0.4 + 0.5 * pulse); ctx.lineWidth = 2;
+          ctx.strokeRect(this.x + 1, this.y + 1, this.w - 2, this.h - 2);
+        }
       }
       ctx.restore();
-      void t;
     }
   }
   G.registerEntity('telegraph', TelegraphZone);

@@ -3,6 +3,7 @@
 // qa-playthrough). Proves at runtime that GUTTERLIGHT is completable from New Game to both endings.
 //
 //   node tools/playthrough.js [--from <step>] [--to <step>] [--list] [--shots] [--verbose] [--file dist/Gutterlight.html]
+//                             [--mode standard|easy]   (default standard: the trial picked at New Game; easy = the old run)
 //
 // How it plays
 //   * The game runs in headless Chromium (paused=1&mute=1, real boot through the title unless resuming), driven
@@ -43,6 +44,8 @@ const FLAG = (k) => argv.includes(k);
 const VERBOSE = FLAG('--verbose');
 const SHOT = FLAG('--shots');
 const FILE = arg('--file', 'index.html');
+const MODE = arg('--mode', 'standard'); // the trial chosen at New Game (hardcore is not supported: the bot dies once)
+if (!['easy', 'standard'].includes(MODE)) { console.error('playthrough: --mode must be easy or standard'); process.exit(2); }
 
 const T0 = Date.now();
 const logLines = [];
@@ -715,14 +718,18 @@ const S = [];
 const step = (id, desc, fn) => S.push({ id, desc, fn });
 
 step('boot', 'real title → New Game → intro → wake-up in sh_01', async () => {
-  const s = await ev(() => {
+  const s = await ev((mode) => {
     PT.step(40);
     const out = { mode0: G.game.mode, ui0: PT.ui() };
     PT.press('jump', 1, 60);                 // title gate → menu (Audio.init)
     PT.press('confirm', 1, 40);              // New Game → slot select
     const t = G.UI.find('title');
     out.view = t && t.view;
-    PT.press('confirm', 1, 1);               // slot 0 → intro
+    PT.press('confirm', 1, 30);              // slot 0 → "Choose a Trial" (cursor on Standard)
+    const tm = G.UI.find('title');
+    out.modesView = tm && tm.view;
+    if (mode === 'easy') PT.press('up', 1, 5); // Standard → Easy
+    PT.press('confirm', 1, 1);               // trial → intro
     let f = 0; for (; f < 240 && !PT.ui().includes('intro'); f++) PT.step(1);
     out.intro = PT.ui().includes('intro');
     PT.step(240);
@@ -734,8 +741,12 @@ step('boot', 'real title → New Game → intro → wake-up in sh_01', async () 
     out.room = G.game.room && G.game.room.id;
     out.mode = G.game.mode;
     out.real = G.game.player && G.game.player.constructor && G.game.player.constructor.name;
+    out.difficulty = G.game.difficulty && G.game.difficulty();
+    out.tele = G.game.telegraphs && G.game.telegraphs();
     return out;
-  });
+  }, MODE);
+  log('  trial ' + s.difficulty + ' (telegraphs ' + s.tele + ', chooser ' + s.modesView + ')');
+  must(s.modesView === 'modes' && s.difficulty === MODE && s.tele === (MODE === 'easy'), 'New Game trial chooser → ' + MODE, s);
   log('  title ' + s.mode0 + ' → slots(' + s.view + ') → intro ' + s.intro + ' → ' + s.room + ' locks ' + JSON.stringify(s.locks) + ' wake ' + s.wakeFrames + ' f');
   must(s.mode0 === 'title' && s.intro && s.room === 'sh_01' && s.mode === 'play', 'new game starts in sh_01', s);
   must(s.locks.includes('wake'), 'wake-up cinematic plays', s.locks);
@@ -932,8 +943,9 @@ async function resumeFrom(prevStep) {
   const tx = Math.floor((ck.motor.x + 14) / 40), ty = Math.floor((ck.motor.y + 70) / 40);
   ({ page, errors: pageErrors, logs: pageLogs } = await openGame({ file: FILE, query: 'test=1&paused=1&mute=1&seed=7&room=' + ck.room + '&tx=' + tx + '&ty=' + ty }));
   await page.evaluate(INJECT);
-  const r = await ev((ck) => {
+  const r = await ev((ck, mode) => {
     G.game.progress = ck.progress;
+    G.game.progress.mode = mode;              // the checkpoint's run continues in the requested trial
     G.game.enterRoom(ck.room, { tx: 1, ty: 1 });
     const m = G.game.player.motor;
     m.x = ck.motor.x; m.y = ck.motor.y; m.vx = 0; m.vy = 0;
@@ -941,7 +953,7 @@ async function resumeFrom(prevStep) {
     G.debug.god(true);
     PT.step(2);
     return { room: G.game.room.id, x: m.x, y: m.y, sparks: G.game.progress.sparks.length };
-  }, ck);
+  }, ck, MODE);
   log('resumed from checkpoint "' + prevStep + '" in ' + r.room + ' at ' + r.x.toFixed(0) + ',' + r.y.toFixed(0));
 }
 
@@ -951,7 +963,7 @@ async function resumeFrom(prevStep) {
   let i0 = 0, i1 = S.length - 1;
   if (from) { i0 = S.findIndex((s) => s.id === from); must(i0 >= 0, 'unknown step ' + from); }
   if (to) { i1 = S.findIndex((s) => s.id === to); must(i1 >= 0, 'unknown step ' + to); }
-  log('GUTTERLIGHT playthrough: steps ' + S[i0].id + ' .. ' + S[i1].id + ' (' + (i1 - i0 + 1) + '), file ' + FILE);
+  log('GUTTERLIGHT playthrough: steps ' + S[i0].id + ' .. ' + S[i1].id + ' (' + (i1 - i0 + 1) + '), file ' + FILE + ', mode ' + MODE);
   if (i0 === 0) {
     ({ page, errors: pageErrors, logs: pageLogs } = await openGame({ file: FILE, query: 'paused=1&mute=1&seed=7' }));
     await page.evaluate(INJECT);

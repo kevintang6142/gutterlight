@@ -96,11 +96,57 @@ Exactly TECH_SPEC §6: `update() down(a) pressed(a) released(a) consume(a) anyPr
 label(a) setVirtual(state) clearVirtual()` plus:
 - `consumeAll()` — clear every pressed edge (use after closing a screen so the press doesn't leak).
 - `reset()` — drop all held/pressed state.
-- `keyLabels(a)` → `['Z','Space']`, `padLabels(a)` → `['A']` (Controls screen); `ACTIONS KEYMAP PADMAP`.
-- Bindings are physical key positions (`KeyboardEvent.code`); labels name the key PRINTED there: filled from `navigator.keyboard.getLayoutMap()` (when available) and learned from `e.key` on every key press (AZERTY: jump shows `W`, up shows `Z`). `labelsVersion` bumps on every label change; `refreshLabels()` re-reads the layout map. Without either source the labels are QWERTY.
+- `GAME_ACTIONS` = the 12 rebindable actions `left right up down jump attack dash spell interact map inventory pause`;
+  `ACTIONS` = those + the derived menu actions `confirm cancel`.
+
+**Bindings (rebindable).** Every gameplay action has 3 slots: `[primary, secondary, gamepad]`; slots 0/1 take
+keyboard/mouse inputs, slot 2 (`PAD_SLOT`) pad inputs; each holds a typed id or `null`:
+`'key:<KeyboardEvent.code>'` (Shift/Control/Alt/Meta merged: `'key:Shift'`), `'mouse:<button>'` (0 LMB, 1 MMB,
+2 RMB, 3 Mouse 4/back, 4 Mouse 5/forward), `'pad:<standard button>'`, `'axis:<index>-'|'+'`.
+Defaults = TECH_SPEC §6 (left ←/A/D-pad ←, … jump Z/Space/A, attack X/J/X, dash C/Shift/RB, spell V/L/B,
+interact ↑/W/D-pad ↑, map Tab/M/Back, inventory I/—/LB, pause Esc/P/Start). Dash's other defaults (K, RT) don't fit
+the slots: they are "extras" (`getExtras()`), active until the player edits that column group of Dash (any keyboard
+slot drops K, the pad slot drops RT), binds them elsewhere, or resets.
+- `getBindings()` → `{action: [s0, s1, s2]}` (copy); `defaultBindings()`; `getExtras()`.
+- `setBinding(action, slot, id)` → `{ok, moved:[{action, slot, input}], swapped, reason, action}`. The input is
+  removed from any other gameplay action (up and interact may share). If that would leave the other action with no
+  binding at all, it receives this slot's previous input (`swapped`); with nothing to swap the call is refused
+  (`reason:'last'`). Other reasons: `'kind'` (wrong slot kind), `'reserved'` (Escape — only pause may hold it —,
+  Backspace, Delete, Enter, NumpadEnter), `'os'` (Meta/Win/Cmd), `'input'`, `'action'`, `'slot'`. `reason:'last'` with
+  `device:'gamepad'`: Pause would be left without a pad input (a rebind that takes Pause's pad button swaps that
+  action's old pad input into Pause, or is refused). On success `warning:'ctrlCombos'` when Ctrl is bound together
+  with W/T/N (the browser always handles Ctrl+W/T/N).
+- `clearBinding(action, slot)` → `{ok}`; refused (`reason:'last'`) when it is the action's last input.
+- `resetBindings()`. Every change bumps `labelsVersion` and persists (`G.settings.bindings` + `G.Save.saveSettings()`).
+- `loadBindings(raw)` (validates: wrong version / non-object → defaults; a corrupt entry → that slot's default;
+  duplicates → first owner keeps it; an action left empty → the whole table resets) and `serializeBindings()` →
+  `{v:1, slots, extra}` — used by `G.Save`. `sanitizeBindings(raw)` = the validator alone.
+- `activeInputs(action, menu)` — every id the action reacts to now (bindings + extras + implicit + fallbacks).
+- Implicit inputs (only while not bound to another action): the left stick moves (`axis:0-/0+/1-/1+`, stick up = up
+  + interact) and Start pauses.
+- **Lockout protection**: Escape always pauses and cancels; `confirm` = Enter / NumpadEnter / pad A + jump's
+  keyboard/mouse inputs (+ J while Attack still has it); `cancel` = Escape / Backspace / pad B (+ X while Attack
+  still has it). While a menu has the input (`G.game.mode !== 'play'` or `G.game.uiBlocking()`; `forceMenu`
+  true/false overrides) the arrow keys, D-pad and left stick also drive up/down/left/right, whatever the bindings.
+- **Mouse**: listeners on the init target (window): presses count only on the canvas / page body, releases
+  anywhere. Only bound buttons have their default prevented (no selection, middle-click scroll, back/forward
+  navigation on Mouse 4/5); the canvas keeps keyboard focus. While any mouse button is bound the browser context
+  menu is suppressed on the game. Unbound clicks are never actions (and never `anyPressed`). A mouse press sets
+  `lastDevice = 'keyboard'`.
+- **Capture** (Controls screen): `beginCapture(cb)` waits for the next key / mouse button (on the game) / pad button
+  or stick push (> 0.6 from rest, any connected pad) and calls `cb` once from `update()` with `{input: id}`,
+  `{clear: true}` (Backspace/Delete) or `{cancel: true[, timeout: true]}` (Escape, or 10 s without input — pads
+  have no Esc). No action is reported while capturing and the ending input is swallowed until released.
+  `cancelCapture()`, `capturing`, `captureTime`.
+- `rawDown(id)`, `rawPressed(id)` — the physical state of one typed id this step, independent of bindings.
+- Labels: `label(a)` (prompts, last-used device; pad movement shows arrows; an action with no pad binding shows its
+  keyboard label), `keyLabels(a)` → `['Z','Space']`, `padLabels(a)` → `['A']`, `labelOf(id)` (`'LMB'`, `'Mouse 4'`,
+  `'LS ←'`, `'Num 5'`, …), `keyLabel(code)`. `KEYMAP` / `PADMAP` remain as read-only views (codes / buttons per
+  action rebuilt from the current bindings).
+- Keys are physical positions (`KeyboardEvent.code`); labels name the key PRINTED there: filled from `navigator.keyboard.getLayoutMap()` (when available) and learned from `e.key` on every key press (AZERTY: jump shows `W`, up shows `Z`). `labelsVersion` bumps on every label or binding change (`UI.layoutRich` caches key on it); `refreshLabels()` re-reads the layout map. Without either source the labels are QWERTY.
 - Several gamepads: only the pad with the most recent activity (new button press, or a stick leaving its resting range) drives the game; until then the first `standard`-mapping pad. Axes already outside the deadzone when a pad appears (pedals) are not activity.
-- Sub-frame taps are latched: a key pressed and released between two steps still counts as one press.
-- `interact` mirrors `up` (keyboard, D-pad and stick). `setVirtual({up:true})` also sets `interact`.
+- Sub-frame taps are latched: a key / mouse button pressed and released between two steps still counts as one press.
+- `interact` defaults to the same inputs as `up` (keyboard, D-pad and stick). `setVirtual({up:true})` also sets `interact`.
 
 The engine calls `G.input.update()` once per fixed step before `G.UI.update`. UI code should
 `consume()` the actions it handles.
@@ -114,7 +160,9 @@ ending, health, maxHealth, cinders}`, `list()` (3 summaries), `SLOTS = 3`, `memo
 newest value is then kept and read from memory), `persistent`. `summary.completed` is true once any ending was seen
 (`completed` or `endingsSeen`); `summary.ending` = current or last seen ending. If a save does not persist, `saveNow`
 shows a one-time toast (failed write / storage unavailable; outside `?test=1`).
-`G.settings = {masterVolume, musicVolume, sfxVolume, ambienceVolume, shake (0..1), hints (bool)}`;
+`G.settings = {masterVolume, musicVolume, sfxVolume, ambienceVolume, shake (0..1), hints (bool), bindings}`
+(`bindings` = `{v, slots, extra}` from `G.input.serializeBindings()`, shared by all save slots; loaded and validated
+through `G.input.loadBindings`, written from `G.input` on every save — G.input is the source of truth);
 after changing call `G.Save.saveSettings()` (persists + pushes volumes to `G.Audio`).
 `?test=1` → memory only, localStorage is never touched. localStorage failure → silent memory fallback.
 
@@ -291,7 +339,8 @@ engine's own transition fades), then `G.UI.draw(ctx)`, then the debug overlay.
 
 ## 14. Game (`G.game`)
 
-Modes: `'boot' 'title' 'play' 'transition' 'dead' 'ending'`. State: `progress room player region t
+Modes (engine state, `G.game.mode`, a string): `'boot' 'title' 'play' 'transition' 'dead' 'ending' 'gameover'`.
+The run's **difficulty** is a different thing, read with `G.game.difficulty()` (see §14.1). State: `progress room player region t
 slot god mode fadeAlpha flashAlpha hitstopTime deathTime`. Constants: `ABILITIES BOSSES SIGIL_COSTS`,
 `defaultProgress(slot)` (schema §11.1; `sconce: null` and `lastRoom: null` before first use).
 
@@ -306,9 +355,9 @@ respawn. `playTime` accumulates in play/transition/dead unless UI-blocking.
 
 | API | Behaviour |
 |---|---|
-| `newGame(slot)` | fresh progress; `G.UI.playIntro(begin)` if present (skipped in test mode); start = `sh_01` `start` entity, else the first dev room (`def.spawn`). Like `continueGame` and `quitToTitle`, it first resets the session, which also closes every UI screen (`G.UI.closeAll(false)`) and clears overlays |
-| `continueGame(slot)` | load (missing fields filled), full health, respawn at sconce (or start); no save → newGame |
-| `quitToTitle()` | saves (keeps a pending wisp), resets the session, `openTitle()` |
+| `newGame(slot, mode?)` | fresh progress with `progress.mode` = `mode` if valid, else `?mode=` (URL), else `'easy'` in test mode / `'standard'` in a release run; `G.UI.playIntro(begin)` if present (skipped in test mode); start = `sh_01` `start` entity, else the first dev room (`def.spawn`). Like `continueGame` and `quitToTitle`, it first resets the session, which also closes every UI screen (`G.UI.closeAll(false)`) and clears overlays |
+| `continueGame(slot)→bool` | load (missing fields filled), full health, respawn at sconce (or start); no save → newGame. A **broken hardcore save is refused**: returns `false`, emits `continueRefused {slot, reason:'broken'}` and (if not already there) reopens the title |
+| `quitToTitle()` | saves (keeps a pending wisp — through `G.wispSpotFor`; never for a broken run), resets the session, `openTitle()`. Nothing is saved from the `ending`/`gameover` modes |
 | `openTitle()` | `G.UI.openTitle()` or the built-in "press any key" title (any key → continue slot 0 / new game) |
 | `saveNow()` | writes progress (lastRoom updated); emits `save` |
 | `enterRoom(id, place)` | place: `{tx,ty}` (feet on tile) · `{x,y}` px · `{sconce:id}` · `{lanternway:id}` · `{}` (start/spawn/respawn/sconce/center). Clears fx/zone/hitstop/boss music, spawns entities + wisp, `Art.prepareRoom`, camera snap, room audio, area card on region change, emits `regionEnter`/`roomEnter`, calls `player.onRoomEnter(room)` |
@@ -318,7 +367,7 @@ respawn. `playTime` accumulates in play/transition/dead unless UI-blocking.
 | `fade(toAlpha, sec, onDone)` | public black overlay (cutscenes); a new fade completes the previous one's callback immediately (and any fade that callback starts on the same fader is completed too, so no callback is ever dropped) |
 | `lockPlayer(reason)` / `unlockPlayer(reason)` | stackable (counted per reason); `isLocked()`, `lockReasons()`, `clearLocks()` |
 | `rest(sconce)` | heal to max, set respawn `{room, id}` (id = `persistId`/`props.id`), save, emit `rest` |
-| `playerDied()` | mode `dead`: burst + sfx + shake; after 1.1 s fade 0.7 s → `progress.wisp = {room, x, y, cinders}` (replaces any old wisp), cinders 0, ember 0, full health, `player.respawn()` (or a new player), enter sconce room (or start), save, fade in, emit `respawn`. Hazard deaths leave the wisp at `lastSafe` |
+| `playerDied()` | mode `dead`: burst + sfx + shake; after 1.1 s fade 0.7 s → `progress.wisp = {room, x, y, cinders}` (replaces any old wisp; the spot goes through `G.wispSpotFor`, §14.1), cinders 0, ember 0, full health, `player.respawn()` (or a new player), enter sconce room (or start), save, fade in, emit `respawn`. Hazard deaths leave the wisp at `lastSafe`. **Hardcore**: see §14.1 (broken + saved at once, no wisp, game over) |
 | `hasAbility(id)`, `giveAbility(id, {silent, onDone})` | sets + saves + `abilityGet` event + `G.UI.abilityGet` card unless silent |
 | `getFlag(k)`, `setFlag(k, v=true)`, `clearFlag(k)` | progress flags |
 | `addCinders(n)`, `spendCinders(n)→bool` | clamped 0..99999; `cinders` event |
@@ -360,6 +409,45 @@ the ground below it), saves, fades in 0.18 s. No neighbour → held at the bound
 active) and `G.Audio.ambience(...)`; region change → `G.UI.areaCard(regionId, firstVisit)` (not for
 the test region).
 
+
+### 14.1 Difficulty modes, hardcore permadeath, wisp hook
+
+`progress.mode` ∈ `'easy' | 'standard' | 'hardcore'`; `progress.broken` (bool). A save without `mode` predates the
+modes and migrates to `'easy'` (an invalid value too); only a hardcore save can be broken (migrate clears `broken`
+otherwise, and drops the wisp of a broken save). The mode is chosen at New Game (title mode chooser, default cursor
+Standard) and never changes during a run (the pause menu shows it read-only).
+
+| API | Behaviour |
+|---|---|
+| `difficulty()` (alias `runMode()`) | the run's mode (`progress.mode`); without progress: `?mode=` if valid, else `'easy'` with `?test=1`, else `'standard'`. **Note:** the shared contract named this `G.game.mode()`, but `G.game.mode` already is the engine state string (used in ~170 places), so the difficulty getter is `difficulty()` |
+| `telegraphs()` | `true` only in `'easy'`: entity code draws EXPLICIT telegraphs only then — `const tele = !(G.game && G.game.telegraphs) \|\| G.game.telegraphs();` |
+| `isHardcore()`, `isBroken()` | `difficulty() === 'hardcore'`; current progress is a broken run |
+| `MODES` | `['easy', 'standard', 'hardcore']` |
+| URL `?mode=easy\|standard\|hardcore` | the mode of NEW progress when the caller passes none (test boot, debug `teleport` without a session, the no-UI fallback title). It does not override a loaded save. `?test=1` without it → `'easy'`, so existing tests keep their behaviour |
+
+**Hardcore permadeath (Steel Soul).** At the instant of death (`playerDied`, every death path goes through it:
+`player.hurt`, hazards, the debug fallback player) the progress gets `broken = true`, `wisp = null`, `diedIn = <room id>`,
+`health = 0` and is **saved immediately**, then `runBroken {slot, room, bossId}` is emitted. After the death animation
+(1.1 s) a slower fade (1.6 s) leads to `gameOver()`: the session is reset (room/player released), mode `gameover`,
+music/ambience stop, `gameOver {slot, room, regionId, playTime, completion}` is emitted and
+`G.UI.playGameOver(info, done)` plays (src/ui/ending.js; built-in black "Your flame is spent." fallback without UI);
+`done` → `quitToTitle()` (nothing saved). No path resumes a broken save: `respawn()` turns into `gameOver()` for a
+broken run, `quitToTitle()` mid-death saves it broken and leaves no wisp, a reload finds it broken (it was written at
+the death instant), `continueGame` refuses it, the title disables Continue on it, the no-UI fallback title starts a
+new game instead, `G.debug.teleport` refuses while the run is broken or in `gameover`, and `G.debug.setMode` never
+un-breaks it. Erasing the slot works as for any save. (Limit: if another window owns the slot — `G.Save.isStale` —
+this window's saves are refused, the broken mark included; the other window's copy then wins.)
+`G.Save.summary(slot)` adds `mode` and `broken` (and, for a broken run, uses `diedIn` for the region).
+
+**Wisp hook.** Wherever a wisp is created (respawn after death, quit to title mid-death) the engine calls
+`G.wispSpotFor({room, x, y, arenaActive, bossId})` (src/entities/wisp.js) when defined: `room/x/y` = the death spot
+(px, room-local; `lastSafe` for hazard deaths); `arenaActive` = an arena controller in that room was active (beat or
+fight) or a live, undefeated `boss_*` entity was there at the instant of death; `bossId` = that boss, else the boss of
+an undefeated (idle) arena in that room (died before triggering it), else `null`. A returned `{room, x, y}` naming a
+known room with finite coordinates replaces the spot; `null` keeps it; anything else is reported and ignored. Both
+states are captured at the instant of death. (`G.game._internal.arenaInfo(room)`, `_wispFor(deathInfo, cinders)`
+for tests.)
+
 ## 15. Contracts the engine expects from other modules
 
 **Player** (`G.registerEntity('player', Player)`; when absent the engine uses `G.DebugPlayer`):
@@ -399,8 +487,9 @@ URL params: `test=1` (skip title; new in-memory game), `paused=1` (no RAF loop; 
 |---|---|
 | `step(n=1)` | n fixed steps then one render; returns `{mode, room, x, y, errors}` |
 | `render()` | render one frame |
-| `state()` | `{mode, room, region, t, player:{type,x,y,vx,vy,tx,ty,health,maxHealth,ember,cinders,onGround,wall,swimming,inWater,plunging,dashing,facing,hazard,invuln,events}, entities:[{type,kind,id,x,y}], ui:[...], locks, fade, errors}` |
-| `teleport(roomId, tx, ty)` | other room → `enterRoom` (no fade); same room → place (feet on tile `ty`) |
+| `state()` | `{mode, room, region, t, player:{type,x,y,vx,vy,tx,ty,health,maxHealth,ember,cinders,onGround,wall,swimming,inWater,plunging,dashing,facing,hazard,invuln,events}, entities:[{type,kind,id,x,y}], ui:[...], difficulty, broken, locks, fade, errors}` |
+| `teleport(roomId, tx, ty)` | other room → `enterRoom` (no fade); same room → place (feet on tile `ty`). Returns `false` (does nothing) while the run is a broken hardcore run or in `gameover` |
+| `setMode(mode)` | tests/debug: set the current run's difficulty; never un-breaks a broken run; returns `difficulty()` |
 | `give(spec)` | `'all'` (6 abilities), `'everything'` (all collectibles → 100 %), an ability id, or any `giveItem` spec; silent (no cards) |
 | `god(on=true)` | invulnerable (`G.game.god`) |
 | `setInput(state, frames)` | hold virtual input for `frames` steps then auto-clear (omit frames = hold until changed); `clearInput()` |

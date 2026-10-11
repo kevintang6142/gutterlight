@@ -289,6 +289,52 @@ G.warnZone(room, { x, y, w, h, dur: 0.8, color: '#ffcf8a', style: 'rect'|'column
                    onDone: (zone) => { /* spawn the real hazard here */ } });   // bosses: this.warnZone({...})
 ```
 
+### 6.1 Telegraphs by difficulty mode (easy / standard / hardcore)
+
+`G.game.telegraphs()` is true only in **easy**. The framework wraps it as **`G.telegraphsOn()`** (feature-detects
+`G.game.telegraphs`; before the engine lands it falls back to the `?mode=` URL param, then `progress.mode`,
+default easy). Check it **at draw time** only — never branch gameplay timing on it.
+
+- **EXPLICIT telegraphs** (easy only): drawn geometry that outlines WHERE/WHEN damage lands or its PATH — floor
+  strips/seams/zones/columns/lanes, brackets, landing rings/markers, reticles, aim/trajectory lines, hitbox ghosts,
+  impact shadows marking the exact area, danger tints, countdown pips.
+- **DIEGETIC tells** (all modes): the attacker's windup pose, glow/glint ON the attacker or its weapon
+  (`this.telegraph()` — unchanged in every mode), sounds, shake, particles from the attacker, natural precursors
+  (ceiling dust over a falling rock, floor crumbs before an eruption, a swelling drip), projectiles in flight.
+- Rule: in standard/hardcore every attack keeps ≥ 1 diegetic tell with at least the easy-mode lead time
+  (bosses ≥ 0.45 s). If removing a marker would make the pattern unfair (off-screen source, no visible source,
+  overlapping patterns whose safe spot can't otherwise be read), **keep** it in a subtler form and document it
+  (attack + reason) in your module's doc, in a "Telegraphs by mode" table: `attack | easy | standard | diegetic tell`.
+
+**`G.warnZone` is mode-aware automatically.** In easy it draws exactly as before. In standard/hardcore the zone
+still exists, lasts `dur` and fires `onDone` identically, but draws **no geometry**; instead it emits a diegetic
+cue picked from its style (override with `cue`):
+
+| option | values | meaning |
+|---|---|---|
+| `cue` | `'auto'` (default) · `'dust'` · `'cracks'` · `'drip'` · `'none'` / `false` | standard/hardcore cue. auto: `column`→`dust`, `floor`→`cracks`, `circle`/`rect`→`none` |
+| `cueColor` | css colour or `[pebble, dust]` | particle colour(s) (default: pale stone pebbles + grey-brown dust / crumbs; `drip` uses `color`) |
+| `keep` | `false` (default) · `'subtle'` · `'full'` | also draw the zone in standard/hardcore: `'subtle'` = ~40 % alpha, no bright edge bar/outline; `'full'` = as easy. Only for documented fairness exceptions |
+
+- `dust`: pebbles + dust motes trickle from the zone top (or the top of the view when the ceiling is off-screen)
+  over the middle ~65 % of the column, building up over `dur`. Use for debris/rocks falling from above.
+- `cracks`: 2–3 short dark hairline cracks at the floor line that lengthen, hopping crumbs + dust puffs inside the
+  strip, one faint camera rumble (1.2 px). Use for eruptions / heated floor / spikes from below.
+- `drip`: a drop of `color` swelling on the ceiling (or the top edge of the view) over the column centre, and a thin dribble of droplets falling from it (after the first ~12 %, building up). Use for
+  molten/wax drops falling from above.
+- `none`: nothing extra — pick it when the attacker's own motion already shows where it goes (a visible leap onto
+  a landing zone, a projectile in flight), or when you draw your own diegetic cue.
+
+Subclasses that override `draw`/`update` (e.g. the Matron's `Mark`) must gate their own geometry and may call
+`this.updateCue(dt)` themselves. The placeholder `boss_test` drip columns use the automatic `dust` cue.
+
+Zone fields: `zone.cue`, `zone.keep`, `zone.explicit` (true if the geometry draws right now). Custom markers you
+draw yourself (landing rings, aim lines, seams) must be gated the same way:
+```js
+const tele = G.telegraphsOn ? G.telegraphsOn() : true;
+if (tele) drawLandingMark(ctx, ...);          // easy only
+```
+
 ---
 
 ## 7. Drawing
@@ -320,7 +366,8 @@ G.warnZone(room, { x, y, w, h, dur: 0.8, color: '#ffcf8a', style: 'rect'|'column
   does both and enforces the minimum). Contact damage of a walking body needs no telegraph.
 - **Bosses**: big/committing attacks ≥ 0.5 s, quick attacks ≥ 0.3 s, follow-ups in a combo ≥ 0.2 s
   (`force: true` is required below 0.25 s). Area denial (falling debris, heated floor, erupting
-  spikes) always shows a `warnZone` ≥ 0.6 s before it becomes dangerous.
+  spikes) always shows a `warnZone` ≥ 0.6 s before it becomes dangerous (the zone draws in easy; in
+  standard/hardcore it emits its diegetic cue for the same time — see §6.1).
 - The telegraph must read in silhouette (crouch, raise, rear back) — `this.telegraphing` in
   `drawBody` — not only through the glint.
 - After an attack: a recovery window (≥ 0.4 s) in which the enemy is punishable.

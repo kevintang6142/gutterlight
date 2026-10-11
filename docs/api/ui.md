@@ -32,6 +32,8 @@ G.UI.toast(text)                         // small, bottom-right, non-blocking (m
 G.UI.areaCard(regionId, big)             // big = first visit (centered, ~4 s) else small top-left (~2.6 s); area/boss cards are hidden and wait while a hideHud screen is open
 G.UI.bossCard(bossId)                    // lower third; G.Text.bosses[id] = { name, sub }
 G.UI.prompt(x, y, text)                  // world-space (room px: x = center, y = bottom of label); call every step
+G.UI.playGameOver(info, onDone)          // hardcore death: a candle gutters out on black, "Your flame is spent." / "The light does not return.", region · time · completion; ~11.5 s or confirm/back/pause after 4.4 s → onDone (engine: back to the title). info = {slot, room, regionId, playTime, completion}
+G.UI.modeLabel(mode)                     // 'easy'|'standard'|'hardcore' → "Easy"/"Standard"/"Hardcore" (ui.modeEasy/...)
 G.UI.playEnding(endingId, onDone)        // 'undying' | 'gutterlight' → title → illustrated pages → credits → The End (stops ambience; skip = Back/Pause pressed twice; "The End" waits for the ending track to resolve when audible, confirm moves on)
 ```
 
@@ -57,19 +59,39 @@ Notes for callers
 ### Screens in detail
 | Screen (name on the stack) | Controls | Behaviour |
 |---|---|---|
-| `title` | any key → menu; ↑↓ + confirm; → / ← in slots focuses Erase | gate calls `G.Audio.init()` + `G.Save.applySettings()`; music `title`; Continue (only if a save exists) / New Game / Options / Controls; slots show region (from the save's sconce/last room; falls back to the room-id prefix), play time, completion %, candles, cinders, "Journey Complete"; New Game on an occupied slot and Erase both ask to confirm |
-| `pause` | ↑↓ + confirm; pause/cancel = resume | Resume, Options, Controls, Quit to Title (confirm → `G.game.quitToTitle()`) |
+| `title` | any key → menu; ↑↓ + confirm; → / ← in slots focuses Erase | gate calls `G.Audio.init()` + `G.Save.applySettings()`; music `title`; Continue (only if a save exists) / New Game / Options / Controls; slots show region (from the save's sconce/last room; falls back to the room-id prefix), play time, completion %, candles, cinders, "Journey Complete"; New Game on an occupied slot and Erase both ask to confirm. **Difficulty**: every save card shows its mode after the region name (Easy gold / Standard pale blue / Hardcore red; pre-mode saves read Easy). A **snuffed** (broken hardcore) run keeps region (where it died), time and completion, shows a cracked medallion and a snuffed candle with "Snuffed" in place of the health candles; Continue skips/denies it (it stays selectable so it can be erased). **New Game → slot → mode chooser** (view `modes`, `modeSel`, default Standard): Easy "Attacks are clearly marked - every strike shows where it will land." / Standard "The intended experience. Read your foes." / Hardcore "Standard, but death is final - the save is lost." (Hardcore asks `confirm_hardcore`); Back returns to the slots; an occupied slot is only erased when the new journey begins; → `G.game.newGame(slot, mode)` |
+| `pause` | ↑↓ + confirm; pause/cancel = resume | Resume, Options, Controls, Quit to Title (confirm → `G.game.quitToTitle()`); under the title: region name and the run's difficulty (small caps, read-only — no mode switching mid-run; Hardcore in red) |
+| `gameover` | confirm/attack/jump/back/pause after 4.4 s | hardcore only (`G.UI.playGameOver`); hides the HUD; see §1 |
 | `options` | ↑↓, ←→ adjust | Master/Music/Sound/Ambience volume (10 steps), Screen Shake, Show Control Hints; written to `G.settings` and persisted immediately with `G.Save.saveSettings()` (which applies volumes to `G.Audio`) |
-| `controls` | cancel | keyboard + gamepad table per TECH_SPEC §6 |
-| `map` | arrows/stick pan, jump/confirm zoom in (cycles), dash zoom out, attack/spell re-center (so keyboard X / pad B re-center, not close), map/pause/Backspace/Esc close | rooms of `G.World` (dev rooms excluded): visited = terrain silhouette in region color; charted-but-unvisited = faint; current room framed; blue-flame player marker at the real position; sconce, Lanternway (lit/unlit), merchant (Pell/Quill/Bramm), traveler (other NPCs), seal door icons in visited rooms; Gutterwisp marker; with `waymoth` equipped, uncollected pickups/sparks in visited/charted rooms get a moth sigil; region names at each region's centroid; opens centered on the player |
-| `inventory` | arrows (spatial), confirm equip/unequip, inventory/cancel close | abilities (greyed if missing), health/ember/cinders, Brand level + damage, relics (heartwax x/8 with half-heart, urns, kiln glass, sparks x/6, seals x/3), completion %, sigil grid (owned sigils, procedurally drawn icons), notch meter; equipping only with `atSconce:true` (each change refills health to the new max and saves at once; else "Rest at a Sconce to change Sigils"; over-capacity → "Not enough Notches") via `G.game.equip/unequip` |
+| `controls` | ↑↓ rows, ←→ columns, confirm = rebind the cell, Backspace/Delete (pad Y) = clear, cancel/pause = back | **Rebinding table** (pause > Controls and title > Controls): rows = the 12 gameplay actions (`G.input.GAME_ACTIONS`, names `UI.actionName(a)`), columns Primary / Secondary (keyboard or mouse) / Gamepad; Dash's extra defaults (K, RT) drawn small and dim after its cells. Confirm on a cell → capture (`G.input.beginCapture`): the cell pulses 'Press...' and the message line reads `ui.capturePromptKey`/`KeyPad`/`Pad`/`PadKey` (column x last device); the next key / mouse button / pad button or stick push binds it (`setBinding`); Esc cancels, Backspace/Delete clears, 10 s without input cancels; a pad input on a keyboard column (or the reverse) is refused with a note and the capture continues. Notes (3 s, gold; refusals red): moved from another action (`ui.bindMoved`), swapped (`ui.bindSwapped`), last binding refused (`ui.bindLast`), reserved (`ui.bindReserved`; Enter is reserved too), system key (`ui.bindOsKey`), Pause left without a pad button (`ui.bindLastPad`), Ctrl bound with W/T/N (`ui.bindCtrlWarn`). Below: Reset to Defaults (asks `confirm_reset_controls`, then `ui.controlsReset`) and Back. Otherwise the message line rotates `ui.controlTips` (key caps follow the bindings); a dim line states the fallbacks (`ui.controlsFallbackKey` or `ui.controlsFallbackPad` by last device). Hints: Rebind / Clear (Del or Y) / Back. Bindings persist at once (`G.settings.bindings`). |
+| `map` | arrows/stick pan, jump/confirm zoom in (cycles), dash zoom out, attack/spell re-center (so keyboard X / pad B re-center, not close), map/pause/Backspace/Esc close (all through the current bindings; the arrows/D-pad always pan as a menu fallback) | rooms of `G.World` (dev rooms excluded): visited = terrain silhouette in region color; charted-but-unvisited = faint; current room framed; blue-flame player marker at the real position; sconce, Lanternway (lit/unlit), merchant (Pell/Quill/Bramm), traveler (other NPCs), seal door icons in visited rooms; Gutterwisp marker; with `waymoth` equipped, uncollected pickups/sparks in visited/charted rooms get a moth sigil; region names at each region's centroid; opens centered on the player; the legend lists only the icon kinds present on this map (`UI.mapLegendKinds(screen)`: e.g. no Seal Door entry before the door's room is visited, no Unclaimed Relic without `waymoth`) |
+| `inventory` | arrows (spatial), confirm equip/unequip, inventory/cancel close | no spoilers (§1.1): owned abilities only (rows of 3, centered; no section while none), health as a row of small candles + cinders (no Ember or damage numbers), Brand current name only, held relic types only (Heartwax: half heart while a shard waits for its pair, empty outline otherwise, no count; Ember Urns / Kiln Glass held / Chandler's Sparks: plain counts; Warden Seals: only the obtained seals' icons), owned sigils in the order found (no empty cells; no Sigil pane at all — header, notch meter, Equipped row, Sconce hint — until the first Sigil), notch meter = pips only (filled = in use); no completion % (save-slot cards only); cells exist only for owned things, so every description is a real one; equipping only with `atSconce:true` (each change refills health to the new max and saves at once; else "Rest at a Sconce to change Sigils"; over-capacity → "Not enough Notches") via `G.game.equip/unequip` |
 | `dialogue` | confirm/attack/jump: finish page, then next | speaker name, typewriter (50 cps, `dialogue_blip` every 3 chars), page dots, `{token}` key caps; stage directions (pages starting with `(`) in italics |
 | `lore` | confirm/attack/jump next page | stone slab, engraved title, page dots |
-| `sparkMemory` | confirm/attack/jump next | drifting embers, italic text, slow fades, "Chandler's Spark n / 6" |
-| `shop` | ↑↓, confirm buy (asks to confirm), cancel leave | Pell: `G.Items.shops.pell` minus sold (`flags['item:<id>']`), `G.game.giveItem` (shows the item card); Quill: charts for uncharted regions → `progress.charts[region] = true`; Bramm: next Brand level (current → next damage, cinders + kiln glass); `deny` sfx + "poor" line when short |
-| `lanternway` | ↑↓ (skips unlit), confirm travel, cancel | the 7 posts by region name; current marked; unlit shown as `???` |
+| `sparkMemory` | confirm/attack/jump next | drifting embers, italic text, slow fades, "Chandler's Spark" header (no count) |
+| `shop` | ↑↓, confirm buy (asks to confirm), cancel leave | Pell: `G.Items.shops.pell` minus sold (`flags['item:<id>']`), `G.game.giveItem` (shows the item card); Quill: charts for uncharted regions the player knows (entered — `flags['region:<id>']` — or any room visited; unknown regions are not listed or counted; with none to show but more to come Quill says `shops.quill.unwalked` and the list reads `ui.noChartsYet`) → `progress.charts[region] = true`; Bramm: next Brand level (current → next Brand name with a dim → bright Brand icon, no damage numbers; cinders + kiln glass); `deny` sfx + "poor" line when short |
+| `lanternway` | ↑↓ (skips unlit), confirm travel, cancel | lit posts only, by region name (unlit posts are not listed at all); current marked; `sel` indexes the full post list (LANTERNS order) |
 | `abilityGet` / `itemGet` | confirm (after a short guard) | full-screen dim + rays / medium card; stingers via `G.Audio.stinger` when available |
 | `intro` / `ending` | confirm advances, cancel/pause skips | see §1; endings end with credits (G.Text.credits) and "The End"; both also run unattended |
+
+### 1.1 No spoilers (inventory, map, cards, Lanternway)
+Like Hollow Knight, menus reveal only what the player has found, in every mode:
+- Inventory: no greyed placeholders, no `???`, no empty sockets/cells, no "x / total" anywhere (the notch meter is
+  pips only); relic types appear once at least one is held (Kiln Glass disappears again when all of it is spent at
+  Bramm); completion % lives only on the save-slot cards. `UI.inventoryOwned(progress)` →
+  `{abilities, relics, sigils, seals}` is what the screen lays out.
+- Item cards: counts without totals (`Ember Urns: 2`, `Notches: 4`, `Chandler's Sparks: 3`, `Warden Seals: 1`;
+  an odd Heartwax shard says "Half of a new candle…", an even one "The shards fuse into a new candle.").
+- Map: markers only in visited rooms (the Waymoth moths are the sigil's explicit effect and unchanged); legend
+  only for kinds on the map.
+- Shops: Quill offers a region's chart only once the region is known (entered, or a room of it visited), like
+  Iselda; a partly explored region's chart is still worth buying ("Buy what I've walked, then walk what I haven't").
+- Inventory: the whole Sigil pane (header, notch meter, Equipped row, "Rest at a Sconce" hint) appears only once
+  the first Sigil is owned (`layout.hasSigils`), like Hollow Knight's Charms pane.
+- Not changed on purpose: Pell and Bramm list their own stock, and the Seal Door's own
+  "Warden Seals: n / 3" prompt (`src/entities/interactables.js`) counts the door's three visible sockets.
+- `tools/ui_selftest.js` audits this: `T.capture()` records every string (fillText/strokeText/`UI.spacedText`) and
+  icon drawn in one render; `T.invAudit()` renders the inventory with each cell selected.
 
 ## 2. Presentation kit (for any module drawing text on screen)
 
@@ -104,6 +126,7 @@ UI.flame(ctx, x, y, size, kind, t, seed)   // G.Art.flame when present, else a b
 UI.icons.ability(ctx, id, cx, cy, size, { dim, t }) / UI.icons.item(ctx, kind, cx, cy, size, opts)
 UI.icons.sigil(ctx, id, cx, cy, size, opts)  // procedurally drawn sigil medallions
 UI.drawCinderIcon(ctx, x, y, size)
+UI.notchCost(ctx, x, y, n, align)    // a sigil's notch cost as "Notches" + diamond pips (no digit); inventory.js
 UI.Particles                         // tiny pooled particle list: new UI.Particles(max); spawn({…}); update(dt); draw(ctx, a)
 UI.ease.{inOutSine, outCubic, outBack}, UI.envelope(t, dur, fadeIn, fadeOut) → 0..1, UI.clamp01
 UI.measureCtx()                      // offscreen ctx for measuring text outside draw()
@@ -136,7 +159,7 @@ prompts). Test helpers: `UI.hudSnap()` (HUD jumps to current values), `UI.overla
 - `G.Text`: `ui.*`, `areas`, `abilities`, `items`, `sigils`, `bosses`, `lore`, `sparks`, `intro`, `endings`
   (`{title, pages[], scenes[]}`; scene ids pick the procedural illustration: crown cage reach flame lake gate
   dark sparks hands shatter ash), `credits`, `shops.{pell,quill,bramm}.{greet, bought, poor, empty, maxed}`.
-  Every literal `ui.*` key the UI uses exists in text.js (including `ui.damage`, `ui.zoom`, `ui.adjust`,
+  Every literal `ui.*` key the UI uses exists in text.js (`ui.damage` was removed: no damage numbers; including `ui.zoom`, `ui.adjust`,
   `ui.actions.*`, `ui.mapLegend.*`); the built-in English fallbacks remain as a safety net.
 - `G.Items`: `sigils[id].cost`, `shops.*`, `brandDamage`, `totals`, `order` (optional display order).
 - `G.game.progress` (§11.1), `G.game.maxHealth/emberMax/completion/isEquipped/equip/unequip/notchesUsed`,

@@ -91,3 +91,26 @@ glowing slanted eyes and ember underglow, crawlers by brick red with a warm rim 
 pale soot-stained wax with an ember-lit front rim, glowing coals and furnace-slit eyes, bats by pale ash fur. Deaths:
 sprites and bats burst into ash and leave a small ash heap with dying embers; crawlers crumble into a heap with
 bricks and the broken pot; stokers melt into a dark wax puddle. Telegraph glow colour `#ffb060`.
+
+## Telegraphs by mode (easy / standard / hardcore)
+
+The difficulty modes (`G.game.difficulty()`; `G.telegraphsOn()` is true only in Easy) change only **explicit** telegraphs: drawn geometry that outlines where or
+when damage lands (floor zones, landing marks, aim/trajectory lines, hitbox previews, danger tints). Those draw only
+while `G.game.telegraphs()` (alias `G.telegraphsOn()` in enemy_base) is true, which means easy mode only. The
+telegraph audit (module tele-enemies) found **no explicit marker on any of these enemies**. Every tell below is
+**diegetic**: the attacker's own wind-up pose, a glow or glint on its body or weapon (`telegraph()` anchors it on the
+body, weapon tip, lantern, bell or pot), its sound cue, the wind-up shake, particles it emits, or projectiles forming on
+it and visible in flight. So all three modes look and play the same, with the same timing. Nothing was removed and
+nothing was kept-subtle. Verified: `test-output/tele-enemies/sheet_flue.png` shows easy and standard side by side
+with seeded randomness and 0.00 % pixel difference at every wind-up. The lab self-test passes in all three modes
+(`test-output/tele-enemies/run_all.sh`). **Rule for new attacks:** gate any explicit marker at draw time with
+`G.telegraphsOn()` (or keep it with `keep: true` and document why), and keep a diegetic tell of at least 0.35 s.
+
+| attack | easy | standard / hardcore | diegetic tell (lead time) |
+|---|---|---|---|
+| soot_sprite: dart | no explicit marker | same as easy (nothing to remove) | **puff** 0.42 s: swells, embers glow through the soot, glint, shake |
+| chimney_crawler: ash ball | no explicit marker | same as easy (nothing to remove) | **inflate** 0.55 s: stops, mortar glows, the shell swells, the pot smokes, glint at the pot mouth |
+| stoker: coal lob | no explicit marker | same as easy (nothing to remove) | **scoop** 0.55 s: crouches, digs the blade in, coals glow on the blade (glint there) and embers rise from it; the coals are visible in flight |
+| stoker: shovel slam | no explicit marker | same as easy (nothing to remove) | **swing** 0.62 s: heaves the shovel high behind its head, eyes flare, heavy shake |
+| ash_bat: first swoop | no explicit marker | same as easy (nothing to remove) | **wake** 0.45 s (0.38 s when woken by a hit): eyes snap open, wings unfurl, `bat_screech` |
+| ash_bat: swoop | no explicit marker | same as easy (nothing to remove) | **aim** 0.42 s: rears back, wings high, mouth open, `bat_screech` |
